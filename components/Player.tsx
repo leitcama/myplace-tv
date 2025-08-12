@@ -32,7 +32,17 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
     } catch {} };
   }, [player, videoId, onAdvance, onSkip]);
 
-  return <div className="relative w-full max-w-[1600px] mx-auto aspect-video bg-black rounded-xl overflow-hidden shadow-screen vignette grain">
-    <div ref={ref} className="absolute inset-0" />
-  </div>;
+  return (
+    <div className="relative w-full max-w-[1600px] mx-auto aspect-video bg-black rounded-xl overflow-hidden shadow-screen vignette grain">
+      <div ref={ref} className="absolute inset-0 pointer-events-none select-none" />
+      <div className="absolute inset-0" aria-hidden>
+        <style jsx>{`
+          /* Aggressively hide any hover UI or title splashes */
+          .ytp-chrome-top, .ytp-chrome-bottom, .ytp-gradient-top, .ytp-gradient-bottom, .ytp-show-cards-title, .ytp-title, .ytp-watermark, .ytp-pause-overlay { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+          .ytp-tooltip, .ytp-hover-progress, .ytp-hover-progress-light, .ytp-bezel { display: none !important; }
+          iframe { pointer-events: none !important; }
+        `}</style>
+      </div>
+    </div>
+  );
 }

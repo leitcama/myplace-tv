@@ -22,7 +22,19 @@ export function useYouTube(mountRef: React.MutableRefObject<HTMLDivElement|null>
     if (playerRef.current) return playerRef.current;
     playerRef.current = new window.YT.Player(el, {
       width: "100%", height: "100%",
-      playerVars: { autoplay: 1, controls: 0, modestbranding: 1, rel: 0, playsinline: 1 },
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        modestbranding: 1,
+        rel: 0,
+        playsinline: 1,
+        fs: 0,
+        disablekb: 1,
+        cc_load_policy: 0,
+        iv_load_policy: 3,
+        // showinfo deprecated, but some builds still respect it
+        showinfo: 0
+      },
       events: {}
     });
     return playerRef.current;
@@ -31,6 +43,7 @@ export function useYouTube(mountRef: React.MutableRefObject<HTMLDivElement|null>
   const loadById = useCallback((id: string, startSeconds = 0) => {
     const p = ensurePlayer(); if (!p) return;
     p.loadVideoById({ videoId: id, startSeconds });
+    try { p.mute?.(); } catch {}
   }, [ensurePlayer]);
 
   const getCurrentTime = useCallback((): number => {
@@ -41,5 +54,8 @@ export function useYouTube(mountRef: React.MutableRefObject<HTMLDivElement|null>
     const p = playerRef.current; if (p) p.seekTo?.(s, true);
   }, []);
 
-  return { ready, player: playerRef.current, loadById, getCurrentTime, seekTo };
+  const mute = useCallback(() => { try { playerRef.current?.mute?.(); } catch {} }, []);
+  const unMute = useCallback(() => { try { playerRef.current?.unMute?.(); } catch {} }, []);
+
+  return { ready, player: playerRef.current, loadById, getCurrentTime, seekTo, mute, unMute };
 }

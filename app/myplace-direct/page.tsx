@@ -120,7 +120,13 @@ export default function MyPlaceDirect(){
         {!useIframeFor.has(id) ? (
           <video ref={videoRef} playsInline muted={muted} controls={false} className="absolute inset-0 w-full h-full object-contain bg-black" />
         ) : (
-          <iframe className="absolute inset-0 w-full h-full" src={`https://www.youtube.com/embed/${id}?autoplay=1&controls=0&modestbranding=1&rel=0&playsinline=1&start=${offset}`} allow="autoplay; encrypted-media" allowFullScreen/>
+          <div className="absolute inset-0">
+            <iframe className="absolute inset-0 w-full h-full pointer-events-none" src={`https://www.youtube.com/embed/${id}?autoplay=1&controls=0&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3&fs=0&disablekb=1&showinfo=0&start=${offset}`} allow="autoplay; encrypted-media" allowFullScreen/>
+            <style jsx>{`
+              .ytp-chrome-top, .ytp-chrome-bottom, .ytp-gradient-top, .ytp-gradient-bottom, .ytp-title, .ytp-watermark, .ytp-pause-overlay { display:none !important; opacity:0 !important; visibility:hidden !important; }
+              .ytp-tooltip, .ytp-hover-progress, .ytp-hover-progress-light, .ytp-bezel { display:none !important; }
+            `}</style>
+          </div>
         )}
         <Overlay
           channel={cfg.channel}
