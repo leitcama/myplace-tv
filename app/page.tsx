@@ -1,11 +1,9 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Player from "@/components/Player";
-import Overlay from "@/components/Overlay";
-import GuideModal from "@/components/GuideModal";
 import cfg from "@/public/channel.json";
 import type { ChannelConfig } from "@/lib/schedule/types";
-import { positionAt, resolveVideoId, nextN } from "@/lib/schedule/now";
+import { positionAt, resolveVideoId } from "@/lib/schedule/now";
 
 export default function Page(){
   const config = cfg as unknown as ChannelConfig;
@@ -21,7 +19,6 @@ export default function Page(){
     }
     return false;
   });
-  const [showGuide, setShowGuide] = useState(false);
   const [tick, setTick] = useState(0);
   const [serverTime, setServerTime] = useState<string>("");
 
@@ -70,27 +67,7 @@ export default function Page(){
 
       <div className="relative w-full max-w-[1600px] mx-auto">
         <Player videoId={now.videoId} startSeconds={now.offset} onAdvance={advance} onSkip={onSkip}/>
-        <Overlay
-          channel={config.channel}
-          title={now.title}
-          localTime={new Date().toLocaleTimeString()}
-          offset={now.offset}
-          duration={now.duration}
-          muted={muted}
-          videoId={now.videoId}
-          onToggleMute={()=>{ 
-            const v=!muted; 
-            setMuted(v); 
-            if (typeof window !== "undefined") {
-              localStorage.setItem("mute", v?"1":"0"); 
-            }
-          }}
-          onToggleGuide={()=>setShowGuide(true)}
-          onToggleHelp={()=>alert("Shortcuts: G=Guide, M=Mute")}
-        />
       </div>
-
-      <GuideModal open={showGuide} onClose={()=>setShowGuide(false)} items={nextN(config, new Date(), 36)} />
     </main>
   );
 }

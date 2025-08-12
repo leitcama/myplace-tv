@@ -1,9 +1,7 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChannelConfig } from "@/lib/schedule/types";
-import { nextIndex, positionAt, resolveVideoId, nextN } from "@/lib/schedule/now";
-import Overlay from "@/components/Overlay";
-import GuideModal from "@/components/GuideModal";
+import { positionAt, resolveVideoId } from "@/lib/schedule/now";
 import { useDriftSync } from "@/lib/hooks/useDriftSync";
 
 function useChannelConfig(){
@@ -19,7 +17,6 @@ function useChannelConfig(){
 
 export default function MyPlaceDirect(){
   const cfg = useChannelConfig();
-  const [guideOpen, setGuideOpen] = useState(false);
   const [muted, setMuted] = useState<boolean>(() => {
     try { return localStorage.getItem("mpo_muted") !== "0"; } catch { return true; }
   });
@@ -58,7 +55,6 @@ export default function MyPlaceDirect(){
   // Persist mute state
   useEffect(() => { try { localStorage.setItem("mpo_muted", muted ? "1" : "0"); } catch {} }, [muted]);
 
-  const attempts = useRef(0);
   // Load direct video when id/offset changes unless we marked this id as iframe-only
   useEffect(() => {
     const v = videoRef.current; if (!v || !cfg || !currentId) return;
@@ -79,7 +75,6 @@ export default function MyPlaceDirect(){
         };
         v.addEventListener("loadedmetadata", onLoaded, { once: true });
       } catch (e){
-        // mark for iframe fallback on failure
         setUseIframeFor(prev => new Set(prev).add(currentId));
       }
       if (cancelled) return;
@@ -107,10 +102,7 @@ export default function MyPlaceDirect(){
     return () => { v.removeEventListener("error", onError); };
   }, [currentId]);
 
-  const guide = useMemo(() => cfg ? nextN(cfg, new Date(), 36) : [], [cfg]);
-
   if (!cfg || !currentId) return <div className="min-h-screen bg-black text-white flex items-center justify-center">Loading…</div>;
-  const item = cfg.items[state.index];
   const id = currentId;
   const offset = state.offset;
 
@@ -128,20 +120,7 @@ export default function MyPlaceDirect(){
             `}</style>
           </div>
         )}
-        <Overlay
-          channel={cfg.channel}
-          title={item.title}
-          localTime={new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}
-          offset={offset}
-          duration={item.duration}
-          muted={muted}
-          videoId={id}
-          onToggleMute={() => setMuted(m => !m)}
-          onToggleGuide={() => setGuideOpen(true)}
-          onToggleHelp={() => alert("Press Unmute to hear audio. The channel is deterministic by wall clock and may drift-correct periodically.")}
-        />
       </div>
-      <GuideModal open={!!guideOpen} onClose={() => setGuideOpen(false)} items={guide} />
     </div>
   );
 }
