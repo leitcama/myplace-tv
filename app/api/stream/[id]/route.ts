@@ -42,24 +42,40 @@ async function extractWithYtdlCore(id: string){
   return { progressive, fallback };
 }
 
+const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
 const DEFAULT_PIPED_INSTANCES = [
   "https://piped.video",
   "https://piped.projectsegfau.lt",
   "https://piped.yt",
-  "https://piped.lunar.icu"
+  "https://piped.lunar.icu",
+  "https://piped.syncpundit.com"
 ];
 
-async function fetchJsonWithTimeout(url: string, opts: RequestInit & { timeoutMs?: number } = {}){
+const DEFAULT_INVIDIOUS_INSTANCES = [
+  "https://yewtu.be",
+  "https://inv.nadeko.net",
+  "https://vid.puffyan.us",
+  "https://invidious.nerdvpn.de",
+  "https://invidious.flokinet.to",
+  "https://inv.tux.pizza"
+];
+
+async function fetchTextWithTimeout(url: string, opts: RequestInit & { timeoutMs?: number } = {}){
   const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), opts.timeoutMs ?? 5000);
+  const to = setTimeout(() => controller.abort(), opts.timeoutMs ?? 6000);
   try{
-    const r = await fetch(url, { ...opts, signal: controller.signal });
-    const ct = r.headers.get("content-type") || "";
+    const r = await fetch(url, { headers: { "user-agent": UA, ...(opts.headers||{}) }, ...opts, signal: controller.signal });
     const text = await r.text();
-    if (!r.ok) throw new Error(`http_${r.status}`);
-    if (!ct.toLowerCase().includes("application/json")) throw new Error("not_json");
-    return JSON.parse(text);
+    return { res: r, text };
   } finally { clearTimeout(to); }
+}
+async function fetchJsonWithTimeout(url: string, opts: RequestInit & { timeoutMs?: number } = {}){
+  const { res, text } = await fetchTextWithTimeout(url, opts);
+  const ct = res.headers.get("content-type") || "";
+  if (!res.ok) throw new Error(`http_${res.status}`);
+  if (!ct.toLowerCase().includes("application/json")) throw new Error("not_json");
+  return JSON.parse(text);
 }
 
 async function extractWithPiped(id: string, instanceOverride?: string){
@@ -67,7 +83,7 @@ async function extractWithPiped(id: string, instanceOverride?: string){
   const errs: Array<{ base:string; err:string }> = [];
   for (const base of bases){
     try{
-      const j: any = await fetchJsonWithTimeout(`${base}/api/v1/streams/${encodeURIComponent(id)}`, { headers: { accept: "application/json" }, timeoutMs: 6000 });
+      const j: any = await fetchJsonWithTimeout(`${base}/api/v1/streams/${encodeURIComponent(id)}`, { headers: { accept: "application/json" } });
       const muxed: any[] = Array.isArray(j?.muxedStreams) ? j.muxedStreams : [];
       const progressive = muxed
         .filter(s => s?.url && (s?.container?.includes("mp4") || (s?.mimeType||"").includes("mp4")))
@@ -81,6 +97,25 @@ async function extractWithPiped(id: string, instanceOverride?: string){
   throw new Error(`piped_all_failed:${errs.map(e=>`${e.base}:${e.err}`).join(",")}`);
 }
 
+async function extractWithInvidious(id: string, instanceOverride?: string){
+  const bases = instanceOverride ? [instanceOverride] : DEFAULT_INVIDIOUS_INSTANCES;
+  const errs: Array<{ base:string; err:string }> = [];
+  for (const base of bases){
+    try{
+      const j: any = await fetchJsonWithTimeout(`${base}/api/v1/videos/${encodeURIComponent(id)}`, { headers: { accept: "application/json" } });
+      const streams: any[] = Array.isArray(j?.formatStreams) ? j.formatStreams : [];
+      const progressive = streams
+        .filter(s => s?.url && ((s?.type||"").includes("video/mp4")==true))
+        .map(s => ({ url: s.url, itag: 0, qualityLabel: s.qualityLabel || s.quality, bitrate: Number(s.bitrate)||0 }))
+        .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
+      const fallback = progressive.slice();
+      if (progressive.length || fallback.length) return { progressive, fallback, base } as const;
+      errs.push({ base, err: "empty" });
+    } catch (e:any){ errs.push({ base, err: String(e?.message||e) }); }
+  }
+  throw new Error(`invidious_all_failed:${errs.map(e=>`${e.base}:${e.err}`).join(",")}`);
+}
+
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   const trace = Math.random().toString(36).slice(2);
   try {
@@ -89,7 +124,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
     const urlObj = new URL(req.url);
     const wantProgressiveList = urlObj.searchParams.get("progressive") === "1" || urlObj.searchParams.get("all") === "1";
-    const forceSource = urlObj.searchParams.get("source"); // "piped" to force
+    const forceSource = urlObj.searchParams.get("source"); // "piped" | "invidious" to force
     const instanceOverride = urlObj.searchParams.get("instance") || process.env.PIPED_INSTANCE || undefined;
     const verbose = urlObj.searchParams.get("verbose") === "1";
 
@@ -129,17 +164,24 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
     const tryCore = async () => { const r = await extractWithYtdlCore(id); progressive = r.progressive; fallback = r.fallback; };
     const tryPiped = async () => { const r = await extractWithPiped(id, instanceOverride); progressive = r.progressive; fallback = r.fallback; };
+    const tryInv = async () => { const r = await extractWithInvidious(id); progressive = r.progressive; fallback = r.fallback; };
 
-    let source: "core"|"piped" = "core";
+    let source: "core"|"piped"|"invidious" = "core";
+    const errors: string[] = [];
+
     try {
       if (forceSource === "piped") { await tryPiped(); source = "piped"; }
+      else if (forceSource === "invidious") { await tryInv(); source = "invidious"; }
       else { await tryCore(); source = "core"; }
       if (!progressive.length && !fallback.length) throw new Error("empty_formats");
     } catch (e:any) {
+      errors.push(String(e?.message||e));
       try { await tryPiped(); source = "piped"; }
-      catch (ee:any) {
-        await postTelemetry(req, { type:"stream_error", message:"extract_fail", meta:{ id, trace, err: ee?.message || e?.message } });
-        return NextResponse.json({ error: "extract_fail", detail: ee?.message || e?.message, trace }, { status: 502 });
+      catch (ee:any) { errors.push(String(ee?.message||ee)); try { await tryInv(); source = "invidious"; } catch (eee:any){ errors.push(String(eee?.message||eee)); } }
+      if (!progressive.length && !fallback.length){
+        const detail = errors.join(" | ");
+        await postTelemetry(req, { type:"stream_error", message:"extract_fail", meta:{ id, trace, detail } });
+        return NextResponse.json({ error: "extract_fail", detail, trace }, { status: 502 });
       }
     }
 
