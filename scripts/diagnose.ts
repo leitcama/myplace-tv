@@ -22,6 +22,13 @@ function stamp(){ return new Date().toISOString(); }
 function jline(obj: Json){ const s = JSON.stringify(obj); console.log(s); lines.push(s); }
 const lines: string[] = [];
 
+function envStatus(){
+  const cookieEnv = process.env.YOUTUBE_COOKIE ? true : false;
+  const cookieLen = process.env.YOUTUBE_COOKIE?.length || 0;
+  const file = process.env.YOUTUBE_COOKIES_FILE || "";
+  return { cookieEnv, cookieLen, fileSet: !!file };
+}
+
 async function fetchText(url: string, init?: RequestInit){
   const t0 = Date.now();
   try{
@@ -70,7 +77,7 @@ async function testProxy(urlGoogle: string){
 }
 
 async function main(){
-  jline({ ts: stamp(), kind: "start", base: BASE_URL, id: videoIdArg||null, instance: instanceArg||null });
+  jline({ ts: stamp(), kind: "start", base: BASE_URL, id: videoIdArg||null, instance: instanceArg||null, env: envStatus() });
   const healthy = await testHealth();
   const now = await getNow();
   const id = videoIdArg || now?.videoId || "";
