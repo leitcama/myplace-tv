@@ -13,6 +13,15 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
 
   const [variants, setVariants] = useState<Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }>>([]);
   const [currentUrl, setCurrentUrl] = useState<string>("");
+  const [err, setErr] = useState<string>("");
+
+  const setError = useCallback((code: string, meta?: unknown) => {
+    try {
+      const m = meta ? ` ${JSON.stringify(meta)}` : "";
+      setErr(`${code}${m}`);
+      fetch("/api/telemetry", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "player_error", message: code, meta }) }).catch(()=>{});
+    } catch { setErr(code); }
+  }, []);
 
   const proxify = (u:string) => `/api/stream/proxy?u=${encodeURIComponent(u)}`;
 
@@ -37,15 +46,17 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
       const src = proxify(v.url);
       setCurrentUrl(src);
       el.src = src;
-      el.muted = true; // mobile autoplay requirement
+      el.muted = true;
       el.playsInline = true;
       el.currentTime = start;
       await el.play();
+      setErr("");
       return true;
     } catch (e:any){
+      setError("direct_fail", { id, err: String(e?.message||e) });
       return false;
     }
-  }, [chooseVariant]);
+  }, [chooseVariant, setError]);
 
   useDriftSync({ currentId: videoId, getCurrentTime: async ()=> videoRef.current?.currentTime || 0, seekTo: s => { const el=videoRef.current; if (el) el.currentTime = s; } });
 
@@ -57,9 +68,10 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
     if (cancelled) return;
     if (!ok){
       setUsingIframe(true);
+      setError("fallback_iframe", { id: videoId });
       if (ready) loadById(videoId, startSeconds);
     }
-  })(); return ()=>{ cancelled=true; const el=videoRef.current; if (el) { el.pause(); el.removeAttribute("src"); el.load(); } }; }, [videoId, startSeconds, ready, loadById]);
+  })(); return ()=>{ cancelled=true; const el=videoRef.current; if (el) { el.pause(); el.removeAttribute("src"); el.load(); } }; }, [videoId, startSeconds, ready, loadById, loadDirect, setError]);
 
   useEffect(()=>{
     const el = videoRef.current; if (!el) return;
@@ -74,20 +86,27 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
         el.src = src;
         el.currentTime = ct;
         el.play().catch(()=>{});
+      } else {
+        setError("stall_no_lower_bitrate");
       }
+    };
+    const onMediaError = () => {
+      const me = (el as any).error;
+      setError("media_error", { code: me?.code, ns: el.networkState, rs: el.readyState });
     };
     el.addEventListener("waiting", onStall);
     el.addEventListener("stalled", onStall);
-    return ()=>{ el.removeEventListener("waiting", onStall); el.removeEventListener("stalled", onStall); };
-  }, [variants, currentUrl]);
+    el.addEventListener("error", onMediaError);
+    return ()=>{ el.removeEventListener("waiting", onStall); el.removeEventListener("stalled", onStall); el.removeEventListener("error", onMediaError); };
+  }, [variants, currentUrl, setError]);
 
   useEffect(() => {
     if (!player || !usingIframe) return;
     let started = false;
-    const startTimer = setTimeout(() => { if (!started) { onSkip(599); onAdvance(); } }, 2000);
+    const startTimer = setTimeout(() => { if (!started) { setError("iframe_no_start", { id: videoId }); onSkip(599); onAdvance(); } }, 2000);
     function onPlayback(e:any){ if (e.data === (window as any).YT?.PlayerState.PLAYING) started = true; }
     function onStateChange(e:any){ if (e.data === (window as any).YT?.PlayerState.ENDED) onAdvance(); }
-    function onError(code:number){ onSkip(code); onAdvance(); }
+    function onError(code:number){ setError("iframe_error", { code }); onSkip(code); onAdvance(); }
     player.addEventListener("onStateChange", onStateChange);
     player.addEventListener("onError", onError);
     player.addEventListener("onStateChange", onPlayback);
@@ -96,7 +115,7 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
       player.removeEventListener("onStateChange", onStateChange);
       player.removeEventListener("onStateChange", onPlayback);
     } catch {} };
-  }, [player, usingIframe, onAdvance, onSkip]);
+  }, [player, usingIframe, onAdvance, onSkip, videoId, setError]);
 
   return (
     <div className="relative w-full max-w-[1600px] mx-auto aspect-video bg-black rounded-xl overflow-hidden shadow-screen vignette grain">
@@ -105,6 +124,11 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
       )}
       {usingIframe && (
         <div ref={containerRef} className="absolute inset-0" />
+      )}
+      {err && (
+        <div className="absolute bottom-2 left-2 z-50 bg-black/80 text-red-300 font-mono text-xs px-2 py-1 rounded select-text" title="Tap to copy" onClick={()=>{ navigator.clipboard?.writeText(err).catch(()=>{}); }}>
+          {err}
+        </div>
       )}
     </div>
   );
