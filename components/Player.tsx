@@ -3,15 +3,19 @@ import { useEffect, useRef } from "react";
 import { useYouTube } from "@/lib/hooks/useYouTube";
 import { useDriftSync } from "@/lib/hooks/useDriftSync";
 
-export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
-  videoId:string; startSeconds:number; onAdvance:()=>void; onSkip:(code:number)=>void;
+export default function Player({ videoId, startSeconds, muted, onAdvance, onSkip }:{
+  videoId:string; startSeconds:number; muted:boolean; onAdvance:()=>void; onSkip:(code:number)=>void;
 }){
   const ref = useRef<HTMLDivElement|null>(null);
-  const { ready, player, loadById, getCurrentTime, seekTo } = useYouTube(ref);
+  const { ready, player, loadById, getCurrentTime, seekTo, setMuted } = useYouTube(ref);
   const badIds = useRef<Set<string>>(new Set());
 
   useEffect(() => { if (ready && videoId) loadById(videoId, startSeconds); }, [ready, videoId, startSeconds, loadById]);
   useDriftSync({ currentId: videoId, getCurrentTime, seekTo });
+
+  useEffect(() => {
+    setMuted(!!muted);
+  }, [muted, setMuted]);
 
   useEffect(() => {
     if (!player) return;
