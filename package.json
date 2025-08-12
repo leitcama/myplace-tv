@@ -35,11 +35,11 @@
     "ytpl": "^2.3.0"
   },
   "devDependencies": {
-    "@vitest/ui": "^1.1.0",
+    "@vitest/ui": "^1.6.1",
     "eslint": "^8.56.0",
     "eslint-config-next": "14.0.4",
-    "tsx": "^4.7.0",
-    "vitest": "^1.1.0"
+    "tsx": "^4.20.4",
+    "vitest": "^1.6.1"
   },
   "license": "Apache-2.0"
 }

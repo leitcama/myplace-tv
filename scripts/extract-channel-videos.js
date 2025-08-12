@@ -34,10 +34,9 @@ console.log(JSON.stringify({
   channel: "My Place Ohio",
   epochStart: new Date().toISOString(),
   items: videos.slice(0, 10).map(v => ({
-    kind: "direct",
+    kind: "yt",
     id: v.id,
-    title: v.title,
-    duration: 300 // You will need to get actual durations
+    title: v.title
   })),
   bumpers: {},
   rules: {}
@@ -45,11 +44,13 @@ console.log(JSON.stringify({
 
 console.log("\n=== VIDEO LIST ===");
 videos.slice(0, 10).forEach((v, i) => {
-  console.log(\`\${i + 1}. \${v.title}\`);
-  console.log(\`   ID: \${v.id}\`);
-  console.log(\`   URL: \${v.url}\`);
+  console.log(`\${i + 1}. \${v.title}`);
+  console.log(`   ID: \${v.id}`);
+  console.log(`   URL: \${v.url}`);
   console.log("");
 });
+
+console.log(`\nNOTE: Durations are not included. You must supply actual durations (in seconds) for each item before using the file in the app.\n`);
 
 5. Copy the output and update public/myplace-channel.json
 6. Get actual video durations (you can use YouTube API or manually check)

@@ -44,10 +44,11 @@ export default function Page(){
   }, []);
 
   const now = useMemo(() => {
-    const pos = positionAt(new Date(), config.epochStart, config.items);
+    const baseNow = new Date(serverTime || Date.now());
+    const pos = positionAt(baseNow, config.epochStart, config.items);
     const item = config.items[pos.index];
     return { title:item.title, duration:item.duration, offset:pos.offset, videoId:resolveVideoId(config,item), index:pos.index };
-  }, [config, tick]);
+  }, [config, tick, serverTime]);
 
   const advance = useCallback(() => setTick(t=>t+1), []);
   const onSkip = useCallback((code:number) => console.log(JSON.stringify({ ts:new Date().toISOString(), code, reason:"yt_error", id: now.videoId })), [now.videoId]);
@@ -69,7 +70,7 @@ export default function Page(){
       )}
 
       <div className="relative w-full max-w-[1600px] mx-auto">
-        <Player videoId={now.videoId} startSeconds={now.offset} onAdvance={advance} onSkip={onSkip}/>
+        <Player videoId={now.videoId} startSeconds={now.offset} muted={muted} onAdvance={advance} onSkip={onSkip}/>
         <Overlay
           channel={config.channel}
           title={now.title}
@@ -90,7 +91,7 @@ export default function Page(){
         />
       </div>
 
-      <GuideModal open={showGuide} onClose={()=>setShowGuide(false)} items={nextN(config, new Date(), 36)} />
+      <GuideModal open={showGuide} onClose={()=>setShowGuide(false)} items={nextN(config, new Date(serverTime || Date.now()), 36)} />
     </main>
   );
 }

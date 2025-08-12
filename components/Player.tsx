@@ -3,20 +3,26 @@ import { useEffect, useRef } from "react";
 import { useYouTube } from "@/lib/hooks/useYouTube";
 import { useDriftSync } from "@/lib/hooks/useDriftSync";
 
-export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
-  videoId:string; startSeconds:number; onAdvance:()=>void; onSkip:(code:number)=>void;
+export default function Player({ videoId, startSeconds, muted = false, onAdvance, onSkip }:{
+  videoId:string; startSeconds:number; muted?:boolean; onAdvance:()=>void; onSkip:(code:number)=>void;
 }){
   const ref = useRef<HTMLDivElement|null>(null);
-  const { ready, player, loadById, getCurrentTime, seekTo } = useYouTube(ref);
+  const { ready, player, loadById, getCurrentTime, seekTo, mute, unMute } = useYouTube(ref);
   const badIds = useRef<Set<string>>(new Set());
 
   useEffect(() => { if (ready && videoId) loadById(videoId, startSeconds); }, [ready, videoId, startSeconds, loadById]);
   useDriftSync({ currentId: videoId, getCurrentTime, seekTo });
 
+  // Apply mute state
+  useEffect(() => {
+    if (!player) return;
+    if (muted) { mute(); } else { unMute(); }
+  }, [player, muted, mute, unMute]);
+
   useEffect(() => {
     if (!player) return;
     let started = false;
-    const startTimer = setTimeout(() => { if (!started) { badIds.current.add(videoId); onSkip(599); onAdvance(); } }, 2000);
+    const startTimer = setTimeout(() => { if (!started) { badIds.current.add(videoId); onSkip(599); onAdvance(); } }, 6000);
 
     function onPlayback(e:any){ if (e.data === window.YT?.PlayerState.PLAYING) started = true; }
     function onStateChange(e:any){ if (e.data === window.YT?.PlayerState.ENDED) onAdvance(); }
