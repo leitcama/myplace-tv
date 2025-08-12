@@ -24,8 +24,10 @@ export default function Page(){
   const [showGuide, setShowGuide] = useState(false);
   const [tick, setTick] = useState(0);
   const [serverTime, setServerTime] = useState<string>("");
+  const [localClock, setLocalClock] = useState<string>("");
 
   useEffect(()=>{ const id=setInterval(()=>setTick(t=>t+1),1000); return ()=>clearInterval(id); },[]);
+  useEffect(()=>{ const id=setInterval(()=>setLocalClock(new Date().toLocaleTimeString()), 1000); setLocalClock(new Date().toLocaleTimeString()); return ()=>clearInterval(id); },[]);
 
   // Fetch server time for authoritative sync
   useEffect(() => {
@@ -73,7 +75,7 @@ export default function Page(){
         <Overlay
           channel={config.channel}
           title={now.title}
-          localTime={new Date().toLocaleTimeString()}
+          localTime={localClock || ""}
           offset={now.offset}
           duration={now.duration}
           muted={muted}
