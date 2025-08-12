@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import ytdl from "ytdl-core";
+import { execFile as _execFile } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 
 export const dynamic = "force-dynamic";
 
@@ -121,6 +123,32 @@ async function extractWithInvidious(id: string, instanceOverride?: string){
   throw new Error(`invidious_all_failed:${errs.map(e=>`${e.base}:${e.err}`).join(",")}`);
 }
 
+function execFile(cmd: string, args: string[], timeoutMs = 8000): Promise<{ stdout:string; stderr:string }>{
+  return new Promise((resolve, reject) => {
+    const cp = _execFile(cmd, args, { env: process.env, maxBuffer: 10*1024*1024 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr || err.message));
+      resolve({ stdout:String(stdout||""), stderr:String(stderr||"") });
+    });
+    const to = setTimeout(() => { try { cp.kill(); } catch {} reject(new Error("exec_timeout")); }, timeoutMs);
+    cp.on("exit", () => clearTimeout(to));
+  });
+}
+
+async function extractWithYtDlpCmd(id: string){
+  const bin = process.env.YTDLP_PATH || "yt-dlp";
+  const url = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+  const args = ["-J", "--no-warnings", "--no-check-certificates", "--skip-download", url];
+  const { stdout } = await execFile(bin, args, 12000);
+  const json: any = JSON.parse(stdout);
+  const formats: any[] = Array.isArray(json?.formats) ? json.formats : [];
+  const progressive = formats
+    .filter(f => f?.url && ((f.ext === "mp4") || ((f.mime_type||f.mimeType||"").includes("mp4"))) && f.acodec !== "none" && f.vcodec !== "none")
+    .map(f => ({ url: f.url, itag: Number(f.itag)||0, qualityLabel: f.format_note || f.format || f.resolution, bitrate: Number(f.tbr)||Number(f.bitrate)||0 }))
+    .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
+  const fallback = formats.filter(f=>f?.url).map(f=>({ url: f.url, itag: Number(f.itag)||0, qualityLabel: f.format_note || f.format || f.resolution, bitrate: Number(f.tbr)||Number(f.bitrate)||0 }));
+  return { progressive, fallback };
+}
+
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   const trace = Math.random().toString(36).slice(2);
   try {
@@ -129,7 +157,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
     const urlObj = new URL(req.url);
     const wantProgressiveList = urlObj.searchParams.get("progressive") === "1" || urlObj.searchParams.get("all") === "1";
-    const forceSource = urlObj.searchParams.get("source"); // "piped" | "invidious" to force
+    const forceSource = urlObj.searchParams.get("source"); // "piped" | "invidious" | "ytdlp" to force
     const instanceOverride = urlObj.searchParams.get("instance") || process.env.PIPED_INSTANCE || undefined;
     const verbose = urlObj.searchParams.get("verbose") === "1";
 
@@ -168,21 +196,23 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     let fallback: Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }> = [];
 
     const tryCore = async () => { const r = await extractWithYtdlCore(id); progressive = r.progressive; fallback = r.fallback; };
+    const tryYtDlp = async () => { const r = await extractWithYtDlpCmd(id); progressive = r.progressive; fallback = r.fallback; };
     const tryPiped = async () => { const r = await extractWithPiped(id, instanceOverride); progressive = r.progressive; fallback = r.fallback; };
     const tryInv = async () => { const r = await extractWithInvidious(id); progressive = r.progressive; fallback = r.fallback; };
 
-    let source: "core"|"piped"|"invidious" = "core";
+    let source: "core"|"ytdlp"|"piped"|"invidious" = "core";
     const errors: string[] = [];
 
     try {
       if (forceSource === "piped") { await tryPiped(); source = "piped"; }
       else if (forceSource === "invidious") { await tryInv(); source = "invidious"; }
+      else if (forceSource === "ytdlp") { await tryYtDlp(); source = "ytdlp"; }
       else { await tryCore(); source = "core"; }
       if (!progressive.length && !fallback.length) throw new Error("empty_formats");
     } catch (e:any) {
       errors.push(String(e?.message||e));
-      try { await tryPiped(); source = "piped"; }
-      catch (ee:any) { errors.push(String(ee?.message||ee)); try { await tryInv(); source = "invidious"; } catch (eee:any){ errors.push(String(eee?.message||eee)); } }
+      try { await tryYtDlp(); source = "ytdlp"; }
+      catch (e1:any) { errors.push(String(e1?.message||e1)); try { await tryPiped(); source = "piped"; } catch (e2:any){ errors.push(String(e2?.message||e2)); try { await tryInv(); source = "invidious"; } catch (e3:any){ errors.push(String(e3?.message||e3)); } } }
       if (!progressive.length && !fallback.length){
         const detail = errors.join(" | ");
         await postTelemetry(req, { type:"stream_error", message:"extract_fail", meta:{ id, trace, detail } });
