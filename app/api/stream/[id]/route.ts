@@ -22,6 +22,30 @@ function takeToken(): boolean {
   return false;
 }
 
+async function extractWithYtdlCore(id: string){
+  const info = await ytdl.getInfo(id);
+  const progressive = ytdl.filterFormats(info.formats, "audioandvideo")
+    .filter(f => f.container === "mp4" && !!f.url)
+    .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }))
+    .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
+  const fallback = info.formats.filter(f => !!f.url)
+    .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }));
+  return { progressive, fallback };
+}
+
+async function extractWithPiped(id: string){
+  const r = await fetch(`https://piped.video/api/v1/streams/${encodeURIComponent(id)}`, { headers: { "accept": "application/json" } });
+  if (!r.ok) throw new Error(`piped_${r.status}`);
+  const j: any = await r.json();
+  const muxed: any[] = Array.isArray(j?.muxedStreams) ? j.muxedStreams : [];
+  const progressive = muxed
+    .filter(s => s?.url && (s?.container?.includes("mp4") || (s?.mimeType||"").includes("mp4")))
+    .map(s => ({ url: s.url, itag: Number(s.itag)||0, qualityLabel: s.quality || s.qualityLabel, bitrate: Number(s.bitrate)||Number(s.tbr)||0 }))
+    .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
+  const fallback = progressive.slice();
+  return { progressive, fallback };
+}
+
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   try {
     const id = params.id;
@@ -29,13 +53,13 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
     const urlObj = new URL(req.url);
     const wantProgressiveList = urlObj.searchParams.get("progressive") === "1" || urlObj.searchParams.get("all") === "1";
+    const forceSource = urlObj.searchParams.get("source"); // "piped" to force
 
-    // Serve from cache if valid
-    const cached = cache.get(id);
+    const cacheKey = `${id}:${wantProgressiveList?"list":"top"}`;
+    const cached = cache.get(cacheKey);
     const now = Date.now();
     if (cached && cached.expires > now) {
       const body = cached.data as any;
-      // ensure shape matches request type; if we have variants and caller wants single, return top
       if (!wantProgressiveList && "variants" in body) {
         const top = body.variants[0];
         return NextResponse.json({ url: top.url, itag: top.itag, qualityLabel: top.qualityLabel }, { headers: { "x-cache": "hit" } });
@@ -43,8 +67,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       return NextResponse.json(body, { headers: { "x-cache": "hit" } });
     }
 
-    // Cooldown enforcement
-    const last = lastFetchAt.get(id) || 0;
+    const last = lastFetchAt.get(cacheKey) || 0;
     if (now - last < COOLDOWN_MS && cached) {
       const body = cached.data as any;
       if (!wantProgressiveList && "variants" in body) {
@@ -54,38 +77,42 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       return NextResponse.json(body, { headers: { "x-cache": "cooldown" } });
     }
 
-    // Rate limiting (global)
     if (!takeToken()) {
       const retryAfter = 3;
       return NextResponse.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": String(retryAfter) } });
     }
 
-    lastFetchAt.set(id, now);
+    lastFetchAt.set(cacheKey, now);
 
-    const info = await ytdl.getInfo(id);
-    // Progressive mp4: audio+video in one URL
-    const progressive = ytdl.filterFormats(info.formats, "audioandvideo")
-      .filter(f => f.container === "mp4" && !!f.url)
-      .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }))
-      .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
+    let progressive: Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }> = [];
+    let fallback: Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }> = [];
 
-    // Fallback: any with URL
-    const fallback = info.formats.filter(f => !!f.url)
-      .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }));
+    const tryCore = async () => { const r = await extractWithYtdlCore(id); progressive = r.progressive; fallback = r.fallback; };
+    const tryPiped = async () => { const r = await extractWithPiped(id); progressive = r.progressive; fallback = r.fallback; };
+
+    try {
+      if (forceSource === "piped") await tryPiped(); else await tryCore();
+      if (!progressive.length && !fallback.length) throw new Error("empty_formats");
+    } catch (e:any) {
+      try { await tryPiped(); }
+      catch (ee:any) {
+        return NextResponse.json({ error: ee?.message || e?.message || "resolve_failed" }, { status: 502 });
+      }
+    }
 
     if (wantProgressiveList && progressive.length > 0) {
       const data = { variants: progressive } as const;
-      cache.set(id, { data: data as any, expires: now + CACHE_TTL_MS });
-      return NextResponse.json(data, { headers: { "x-cache": "miss" } });
+      cache.set(cacheKey, { data: data as any, expires: now + CACHE_TTL_MS });
+      return NextResponse.json(data, { headers: { "x-cache": "miss", "x-source": forceSource==="piped"?"piped":"auto" } });
     }
 
     const chosen = progressive[0] || fallback[0];
     if (!chosen?.url) return NextResponse.json({ error: "no_url" }, { status: 404 });
 
     const data = { url: chosen.url, itag: chosen.itag, qualityLabel: chosen.qualityLabel };
-    cache.set(id, { data, expires: now + CACHE_TTL_MS });
+    cache.set(cacheKey, { data, expires: now + CACHE_TTL_MS });
 
-    return NextResponse.json(data, { headers: { "x-cache": "miss" } });
+    return NextResponse.json(data, { headers: { "x-cache": "miss", "x-source": forceSource==="piped"?"piped":"auto" } });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "resolve_failed" }, { status: 500 });
   }
