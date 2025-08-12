@@ -10,7 +10,8 @@
     "lint": "next lint",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "chs-now": "tsx scripts/chs-now.ts"
+    "chs-now": "tsx scripts/chs-now.ts",
+    "agent": "node --env-file=.env --enable-source-maps --no-warnings --loader tsx scripts/agent.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
