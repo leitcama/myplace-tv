@@ -10,7 +10,11 @@ export async function GET(req: Request, { params }:{ params:{ id: string } }){
   const kind = url.searchParams.get("kind") || "master"; // master|v0|seg
   const src = url.searchParams.get("src"); // optional direct source URL to pack
 
-  if (src){ startPackager(id, src); }
+  if (src){
+    const internalBase = process.env.INTERNAL_ORIGIN || "http://localhost:3000";
+    const packSrc = /^https?:\/\//.test(src) ? src : `${internalBase}${src}`;
+    startPackager(id, packSrc);
+  }
 
   if (!isReady(id) && !src){
     return NextResponse.json({ error: "not_ready" }, { status: 404 });
