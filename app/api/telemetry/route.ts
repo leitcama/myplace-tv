@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { appendFileSync, existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 
 // Simple in-memory telemetry store (resets on server restart)
 const telemetryBuffer: Array<{
@@ -9,6 +11,29 @@ const telemetryBuffer: Array<{
 }> = [];
 
 const MAX_ENTRIES = 5000;
+const LOG_PATH = resolvePath(process.cwd(), ".next-cache-telemetry.jsonl");
+const MAX_LOG_BYTES = 5 * 1024 * 1024; // 5MB
+
+function loadFromDisk(){
+  try{
+    if (!existsSync(LOG_PATH)) return;
+    const data = readFileSync(LOG_PATH, "utf8").split("\n").filter(Boolean).slice(-MAX_ENTRIES);
+    for (const line of data){
+      try{ telemetryBuffer.push(JSON.parse(line)); } catch {}
+    }
+  } catch {}
+}
+
+function writeToDisk(ev: any){
+  try{
+    appendFileSync(LOG_PATH, JSON.stringify(ev)+"\n", { encoding: "utf8" });
+    // crude rotate: if too big, delete file (buffer still holds last MAX_ENTRIES)
+    const st = statSync(LOG_PATH);
+    if (st.size > MAX_LOG_BYTES) unlinkSync(LOG_PATH);
+  } catch {}
+}
+
+loadFromDisk();
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -47,6 +72,7 @@ export async function POST(req: Request) {
     } as const;
     telemetryBuffer.push(event as any);
     if (telemetryBuffer.length > MAX_ENTRIES) telemetryBuffer.splice(0, telemetryBuffer.length - MAX_ENTRIES);
+    writeToDisk(event);
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json({ ok: false, error: err?.message || "invalid_json" }, { status: 400 });
