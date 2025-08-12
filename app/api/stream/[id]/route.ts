@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import ytdl from "ytdl-core";
 
+export const dynamic = "force-dynamic";
+
 // Simple in-memory cache and rate limiting (per-process)
 const cache = new Map<string, { data: { url: string; itag: number; qualityLabel?: string } | { variants: Array<{ url: string; itag: number; qualityLabel?: string; bitrate?: number }> }; expires: number }>();
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
@@ -20,6 +22,13 @@ function takeToken(): boolean {
   lastRefill = now;
   if (tokens >= 1) { tokens -= 1; return true; }
   return false;
+}
+
+async function postTelemetry(req: Request, ev: { type: string; message: string; meta?: Record<string, unknown> }){
+  try{
+    const origin = new URL(req.url).origin;
+    await fetch(`${origin}/api/telemetry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ts:new Date().toISOString(), ...ev }) });
+  } catch {}
 }
 
 async function extractWithYtdlCore(id: string){
@@ -47,39 +56,43 @@ async function extractWithPiped(id: string){
 }
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
+  const trace = Math.random().toString(36).slice(2);
   try {
     const id = params.id;
-    if (!id) return NextResponse.json({ error: "missing_id" }, { status: 400 });
+    if (!id) return NextResponse.json({ error: "missing_id", trace }, { status: 400 });
 
     const urlObj = new URL(req.url);
     const wantProgressiveList = urlObj.searchParams.get("progressive") === "1" || urlObj.searchParams.get("all") === "1";
     const forceSource = urlObj.searchParams.get("source"); // "piped" to force
+    const verbose = urlObj.searchParams.get("verbose") === "1";
 
     const cacheKey = `${id}:${wantProgressiveList?"list":"top"}`;
     const cached = cache.get(cacheKey);
     const now = Date.now();
     if (cached && cached.expires > now) {
       const body = cached.data as any;
+      const meta = { cache: "hit", trace } as const;
       if (!wantProgressiveList && "variants" in body) {
         const top = body.variants[0];
-        return NextResponse.json({ url: top.url, itag: top.itag, qualityLabel: top.qualityLabel }, { headers: { "x-cache": "hit" } });
+        return NextResponse.json(verbose ? { ...meta, ...top } : { url: top.url, itag: top.itag, qualityLabel: top.qualityLabel, trace }, { headers: { "x-cache": "hit" } });
       }
-      return NextResponse.json(body, { headers: { "x-cache": "hit" } });
+      return NextResponse.json(verbose ? { ...meta, ...body } : body, { headers: { "x-cache": "hit" } });
     }
 
     const last = lastFetchAt.get(cacheKey) || 0;
     if (now - last < COOLDOWN_MS && cached) {
       const body = cached.data as any;
+      const meta = { cache: "cooldown", trace } as const;
       if (!wantProgressiveList && "variants" in body) {
         const top = body.variants[0];
-        return NextResponse.json({ url: top.url, itag: top.itag, qualityLabel: top.qualityLabel }, { headers: { "x-cache": "cooldown" } });
+        return NextResponse.json(verbose ? { ...meta, ...top } : { url: top.url, itag: top.itag, qualityLabel: top.qualityLabel, trace }, { headers: { "x-cache": "cooldown" } });
       }
-      return NextResponse.json(body, { headers: { "x-cache": "cooldown" } });
+      return NextResponse.json(verbose ? { ...meta, ...body } : body, { headers: { "x-cache": "cooldown" } });
     }
 
     if (!takeToken()) {
       const retryAfter = 3;
-      return NextResponse.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": String(retryAfter) } });
+      return NextResponse.json({ error: "rate_limited", retryAfter, trace }, { status: 429, headers: { "retry-after": String(retryAfter) } });
     }
 
     lastFetchAt.set(cacheKey, now);
@@ -90,30 +103,36 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     const tryCore = async () => { const r = await extractWithYtdlCore(id); progressive = r.progressive; fallback = r.fallback; };
     const tryPiped = async () => { const r = await extractWithPiped(id); progressive = r.progressive; fallback = r.fallback; };
 
+    let source: "core"|"piped" = "core";
     try {
-      if (forceSource === "piped") await tryPiped(); else await tryCore();
+      if (forceSource === "piped") { await tryPiped(); source = "piped"; }
+      else { await tryCore(); source = "core"; }
       if (!progressive.length && !fallback.length) throw new Error("empty_formats");
     } catch (e:any) {
-      try { await tryPiped(); }
+      try { await tryPiped(); source = "piped"; }
       catch (ee:any) {
-        return NextResponse.json({ error: ee?.message || e?.message || "resolve_failed" }, { status: 502 });
+        await postTelemetry(req, { type:"stream_error", message:"extract_fail", meta:{ id, trace, err: ee?.message || e?.message } });
+        return NextResponse.json({ error: "extract_fail", detail: ee?.message || e?.message, trace }, { status: 502 });
       }
     }
 
     if (wantProgressiveList && progressive.length > 0) {
       const data = { variants: progressive } as const;
       cache.set(cacheKey, { data: data as any, expires: now + CACHE_TTL_MS });
-      return NextResponse.json(data, { headers: { "x-cache": "miss", "x-source": forceSource==="piped"?"piped":"auto" } });
+      const resp = verbose ? { source, trace, count: progressive.length, variants: progressive } : data;
+      return NextResponse.json(resp, { headers: { "x-cache": "miss", "x-source": source } });
     }
 
     const chosen = progressive[0] || fallback[0];
-    if (!chosen?.url) return NextResponse.json({ error: "no_url" }, { status: 404 });
+    if (!chosen?.url) return NextResponse.json({ error: "no_url", trace }, { status: 404 });
 
     const data = { url: chosen.url, itag: chosen.itag, qualityLabel: chosen.qualityLabel };
     cache.set(cacheKey, { data, expires: now + CACHE_TTL_MS });
 
-    return NextResponse.json(data, { headers: { "x-cache": "miss", "x-source": forceSource==="piped"?"piped":"auto" } });
+    const resp = verbose ? { source, trace, chosen } : data;
+    return NextResponse.json(resp, { headers: { "x-cache": "miss", "x-source": source } });
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "resolve_failed" }, { status: 500 });
+    try{ await postTelemetry(req, { type:"stream_error", message:"unhandled", meta:{ trace, err: err?.message } }); } catch {}
+    return NextResponse.json({ error: "resolve_failed", detail: err?.message, trace }, { status: 500 });
   }
 }
