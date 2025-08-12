@@ -10,7 +10,11 @@
     "lint": "next lint",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "chs-now": "tsx scripts/chs-now.ts"
+    "chs-now": "tsx scripts/chs-now.ts",
+    "agent": "node --env-file=.env --enable-source-maps --no-warnings --loader tsx scripts/agent.ts",
+    "tunnel": "node scripts/tunnel.js",
+    "serve": "PORT=3000 next start",
+    "diagnose": "tsx scripts/diagnose.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
@@ -32,12 +36,15 @@
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
     "ytdl-core": "^4.11.5",
+    "yt-dlp-exec": "^2.5.5",
+    "hls.js": "^1.5.13",
     "ytpl": "^2.3.0"
   },
   "devDependencies": {
     "@vitest/ui": "^1.1.0",
     "eslint": "^8.56.0",
     "eslint-config-next": "14.0.4",
+    "localtunnel": "^2.0.2",
     "tsx": "^4.7.0",
     "vitest": "^1.1.0"
   },
