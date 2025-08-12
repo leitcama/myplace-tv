@@ -31,18 +31,23 @@ async function postTelemetry(req: Request, ev: { type: string; message: string; 
   } catch {}
 }
 
+const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const ACCEPT_LANG = process.env.YOUTUBE_ACCEPT_LANGUAGE || "en-US,en;q=0.9";
+const COOKIE = process.env.YOUTUBE_COOKIE || "";
+
 async function extractWithYtdlCore(id: string){
-  const info = await ytdl.getInfo(id);
-  const progressive = ytdl.filterFormats(info.formats, "audioandvideo")
-    .filter(f => f.container === "mp4" && !!f.url)
-    .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }))
+  const requestOptions = { headers: { "user-agent": UA, "accept-language": ACCEPT_LANG, ...(COOKIE ? { cookie: COOKIE } : {}) } } as any;
+  const info = await ytdl.getInfo(id, { requestOptions });
+  const formats = info.formats || [];
+  const progressive = formats
+    .filter(f => !!f.url && (f.container === "mp4" || (f.mimeType||"").includes("mp4")) && f.hasAudio && f.hasVideo)
+    .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: (f.bitrate as number) || (f.averageBitrate as number) || 0 }))
     .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
-  const fallback = info.formats.filter(f => !!f.url)
-    .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }));
+  const fallback = formats
+    .filter(f => !!f.url)
+    .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: (f.bitrate as number) || (f.averageBitrate as number) || 0 }));
   return { progressive, fallback };
 }
-
-const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const DEFAULT_PIPED_INSTANCES = [
   "https://piped.video",
@@ -87,7 +92,7 @@ async function extractWithPiped(id: string, instanceOverride?: string){
       const muxed: any[] = Array.isArray(j?.muxedStreams) ? j.muxedStreams : [];
       const progressive = muxed
         .filter(s => s?.url && (s?.container?.includes("mp4") || (s?.mimeType||"").includes("mp4")))
-        .map(s => ({ url: s.url, itag: Number(s.itag)||0, qualityLabel: s.quality || s.qualityLabel, bitrate: Number(s.bitrate)||Number(s.tbr)||0 }))
+        .map(s => ({ url: s.url, itag: Number(s.itag)||0, qualityLabel: s.quality || s.qualityLabel, bitrate: Number(s.bitrate)||0 }))
         .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
       const fallback = progressive.slice();
       if (progressive.length || fallback.length) return { progressive, fallback, base } as const;
