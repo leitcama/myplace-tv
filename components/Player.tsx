@@ -9,13 +9,14 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
   const containerRef = useRef<HTMLDivElement|null>(null);
   const videoRef = useRef<HTMLVideoElement|null>(null);
   const [usingIframe, setUsingIframe] = useState(false);
-  const { ready, player, loadById, getCurrentTime, seekTo } = useYouTube(containerRef);
+  const { ready, player, loadById } = useYouTube(containerRef);
 
   const [variants, setVariants] = useState<Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }>>([]);
   const [currentUrl, setCurrentUrl] = useState<string>("");
 
+  const proxify = (u:string) => `/api/stream/proxy?u=${encodeURIComponent(u)}`;
+
   const chooseVariant = useCallback((list: typeof variants) => {
-    // Simple heuristic: pick medium bitrate first, then adapt
     if (!list.length) return undefined;
     const sorted = list.slice().sort((a,b)=>(a.bitrate||0)-(b.bitrate||0));
     const mid = sorted[Math.floor(sorted.length/2)] || sorted[0];
@@ -32,10 +33,12 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
       setVariants(list);
       const v = chooseVariant(list);
       if (!v) throw new Error("no_choice");
-      setCurrentUrl(v.url);
-      const el = videoRef.current;
-      if (!el) throw new Error("no_video");
-      el.src = v.url;
+      const el = videoRef.current; if (!el) throw new Error("no_video");
+      const src = proxify(v.url);
+      setCurrentUrl(src);
+      el.src = src;
+      el.muted = true; // mobile autoplay requirement
+      el.playsInline = true;
       el.currentTime = start;
       await el.play();
       return true;
@@ -44,34 +47,31 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
     }
   }, [chooseVariant]);
 
-  // Drift sync integration for direct video
   useDriftSync({ currentId: videoId, getCurrentTime: async ()=> videoRef.current?.currentTime || 0, seekTo: s => { const el=videoRef.current; if (el) el.currentTime = s; } });
 
   useEffect(()=>{ let cancelled=false; (async()=>{
     setUsingIframe(false);
     setVariants([]);
     setCurrentUrl("");
-    // Try direct first
     const ok = await loadDirect(videoId, startSeconds);
     if (cancelled) return;
     if (!ok){
-      // Fallback to iframe
       setUsingIframe(true);
       if (ready) loadById(videoId, startSeconds);
     }
   })(); return ()=>{ cancelled=true; const el=videoRef.current; if (el) { el.pause(); el.removeAttribute("src"); el.load(); } }; }, [videoId, startSeconds, ready, loadById]);
 
-  // Basic adaptive downshift on stalling/buffering
   useEffect(()=>{
     const el = videoRef.current; if (!el) return;
     const onStall = () => {
       if (!variants.length) return;
-      const idx = variants.findIndex(v=>v.url===currentUrl);
+      const idx = variants.findIndex(v=>proxify(v.url)===currentUrl);
       const next = variants[Math.max(0, idx-1)] || variants[idx];
-      if (next && next.url !== currentUrl){
+      if (next){
         const ct = el.currentTime;
-        setCurrentUrl(next.url);
-        el.src = next.url;
+        const src = proxify(next.url);
+        setCurrentUrl(src);
+        el.src = src;
         el.currentTime = ct;
         el.play().catch(()=>{});
       }
@@ -101,7 +101,7 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
   return (
     <div className="relative w-full max-w-[1600px] mx-auto aspect-video bg-black rounded-xl overflow-hidden shadow-screen vignette grain">
       {!usingIframe && (
-        <video ref={videoRef} className="absolute inset-0 w-full h-full" playsInline muted={false} controls={false} />
+        <video ref={videoRef} className="absolute inset-0 w-full h-full" playsInline muted controls={false} preload="auto" />
       )}
       {usingIframe && (
         <div ref={containerRef} className="absolute inset-0" />
