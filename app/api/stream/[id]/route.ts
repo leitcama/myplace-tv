@@ -42,17 +42,43 @@ async function extractWithYtdlCore(id: string){
   return { progressive, fallback };
 }
 
-async function extractWithPiped(id: string){
-  const r = await fetch(`https://piped.video/api/v1/streams/${encodeURIComponent(id)}`, { headers: { "accept": "application/json" } });
-  if (!r.ok) throw new Error(`piped_${r.status}`);
-  const j: any = await r.json();
-  const muxed: any[] = Array.isArray(j?.muxedStreams) ? j.muxedStreams : [];
-  const progressive = muxed
-    .filter(s => s?.url && (s?.container?.includes("mp4") || (s?.mimeType||"").includes("mp4")))
-    .map(s => ({ url: s.url, itag: Number(s.itag)||0, qualityLabel: s.quality || s.qualityLabel, bitrate: Number(s.bitrate)||Number(s.tbr)||0 }))
-    .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
-  const fallback = progressive.slice();
-  return { progressive, fallback };
+const DEFAULT_PIPED_INSTANCES = [
+  "https://piped.video",
+  "https://piped.projectsegfau.lt",
+  "https://piped.yt",
+  "https://piped.lunar.icu"
+];
+
+async function fetchJsonWithTimeout(url: string, opts: RequestInit & { timeoutMs?: number } = {}){
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), opts.timeoutMs ?? 5000);
+  try{
+    const r = await fetch(url, { ...opts, signal: controller.signal });
+    const ct = r.headers.get("content-type") || "";
+    const text = await r.text();
+    if (!r.ok) throw new Error(`http_${r.status}`);
+    if (!ct.toLowerCase().includes("application/json")) throw new Error("not_json");
+    return JSON.parse(text);
+  } finally { clearTimeout(to); }
+}
+
+async function extractWithPiped(id: string, instanceOverride?: string){
+  const bases = instanceOverride ? [instanceOverride] : DEFAULT_PIPED_INSTANCES;
+  const errs: Array<{ base:string; err:string }> = [];
+  for (const base of bases){
+    try{
+      const j: any = await fetchJsonWithTimeout(`${base}/api/v1/streams/${encodeURIComponent(id)}`, { headers: { accept: "application/json" }, timeoutMs: 6000 });
+      const muxed: any[] = Array.isArray(j?.muxedStreams) ? j.muxedStreams : [];
+      const progressive = muxed
+        .filter(s => s?.url && (s?.container?.includes("mp4") || (s?.mimeType||"").includes("mp4")))
+        .map(s => ({ url: s.url, itag: Number(s.itag)||0, qualityLabel: s.quality || s.qualityLabel, bitrate: Number(s.bitrate)||Number(s.tbr)||0 }))
+        .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
+      const fallback = progressive.slice();
+      if (progressive.length || fallback.length) return { progressive, fallback, base } as const;
+      errs.push({ base, err: "empty" });
+    } catch (e:any){ errs.push({ base, err: String(e?.message||e) }); }
+  }
+  throw new Error(`piped_all_failed:${errs.map(e=>`${e.base}:${e.err}`).join(",")}`);
 }
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
@@ -64,6 +90,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     const urlObj = new URL(req.url);
     const wantProgressiveList = urlObj.searchParams.get("progressive") === "1" || urlObj.searchParams.get("all") === "1";
     const forceSource = urlObj.searchParams.get("source"); // "piped" to force
+    const instanceOverride = urlObj.searchParams.get("instance") || process.env.PIPED_INSTANCE || undefined;
     const verbose = urlObj.searchParams.get("verbose") === "1";
 
     const cacheKey = `${id}:${wantProgressiveList?"list":"top"}`;
@@ -101,7 +128,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     let fallback: Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }> = [];
 
     const tryCore = async () => { const r = await extractWithYtdlCore(id); progressive = r.progressive; fallback = r.fallback; };
-    const tryPiped = async () => { const r = await extractWithPiped(id); progressive = r.progressive; fallback = r.fallback; };
+    const tryPiped = async () => { const r = await extractWithPiped(id, instanceOverride); progressive = r.progressive; fallback = r.fallback; };
 
     let source: "core"|"piped" = "core";
     try {
