@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import ytdl from "ytdl-core";
 import LruCache from "@/lib/server/lru";
+import { spawn } from "node:child_process";
 
 const cache = new LruCache<string, { url: string; contentType?: string }>(64, 5 * 60 * 1000);
 
@@ -10,25 +11,55 @@ function logJson(obj: Record<string, unknown>) {
 
 function isValidId(id: string){ return /^[a-zA-Z0-9_-]{6,}$/.test(id); }
 
+async function tryYtDlp(videoId: string): Promise<{ url: string; contentType?: string } | null> {
+  if (process.env.YTDLP_FALLBACK !== "1") return null;
+  return new Promise(resolve => {
+    const proc = spawn("yt-dlp", [
+      `https://www.youtube.com/watch?v=${videoId}`,
+      "-f", "best[ext=mp4][acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]/best",
+      "--get-url"
+    ], { stdio: ["ignore", "pipe", "ignore"], timeout: 20000 });
+    let out = "";
+    proc.stdout.on("data", (d) => { out += String(d); });
+    proc.on("close", async (code) => {
+      const url = out.trim().split(/\r?\n/).pop() || "";
+      if (!url) return resolve(null);
+      try {
+        const head = await fetch(url, { method: "HEAD" });
+        if (!head.ok) return resolve(null);
+        return resolve({ url, contentType: head.headers.get("content-type") || undefined });
+      } catch { return resolve(null); }
+    });
+    proc.on("error", () => resolve(null));
+  });
+}
+
 async function resolveMuxedUrl(videoId: string): Promise<{ url: string; contentType?: string }> {
   const cached = cache.get(videoId);
   if (cached) return cached;
 
-  const info = await ytdl.getInfo(videoId);
-  const formats = info.formats || [];
-  const pick =
-    formats.find(f => f.itag === 22) ||
-    formats.find(f => f.itag === 18) ||
-    formats.find(f => f.container === "mp4" && !!f.hasAudio && !!f.hasVideo) ||
-    formats.find(f => !!f.url);
-  if (!pick?.url) throw new Error("no_muxed_url");
+  let value: { url: string; contentType?: string } | null = null;
 
-  // HEAD
-  const head = await fetch(pick.url, { method: "HEAD" });
-  if (!head.ok) throw new Error(`upstream_head_${head.status}`);
-  const contentType = head.headers.get("content-type") || undefined;
+  try {
+    const info = await ytdl.getInfo(videoId);
+    const formats = info.formats || [];
+    const pick =
+      formats.find(f => f.itag === 22) ||
+      formats.find(f => f.itag === 18) ||
+      formats.find(f => f.container === "mp4" && !!f.hasAudio && !!f.hasVideo) ||
+      formats.find(f => !!f.url);
+    if (pick?.url) {
+      const head = await fetch(pick.url, { method: "HEAD" });
+      if (head.ok) value = { url: pick.url, contentType: head.headers.get("content-type") || undefined };
+    }
+  } catch {}
 
-  const value = { url: pick.url, contentType };
+  if (!value) {
+    value = await tryYtDlp(videoId);
+  }
+
+  if (!value) throw new Error("no_muxed_url");
+
   cache.set(videoId, value);
   return value;
 }
