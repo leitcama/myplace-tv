@@ -6,6 +6,7 @@ import GuideModal from "@/components/GuideModal";
 import cfg from "@/public/channel.json";
 import type { ChannelConfig } from "@/lib/schedule/types";
 import { positionAt, resolveVideoId, nextN } from "@/lib/schedule/now";
+import { nextIndex } from "@/lib/schedule/now";
 
 export default function Page(){
   const config = cfg as unknown as ChannelConfig;
@@ -24,6 +25,15 @@ export default function Page(){
   const [showGuide, setShowGuide] = useState(false);
   const [tick, setTick] = useState(0);
   const [serverTime, setServerTime] = useState<string>("");
+  const [badIds, setBadIds] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem("bad_ids");
+        if (raw) return new Set(JSON.parse(raw));
+      } catch {}
+    }
+    return new Set();
+  });
 
   useEffect(()=>{ const id=setInterval(()=>setTick(t=>t+1),1000); return ()=>clearInterval(id); },[]);
 
@@ -45,12 +55,33 @@ export default function Page(){
 
   const now = useMemo(() => {
     const pos = positionAt(new Date(), config.epochStart, config.items);
-    const item = config.items[pos.index];
-    return { title:item.title, duration:item.duration, offset:pos.offset, videoId:resolveVideoId(config,item), index:pos.index };
-  }, [config, tick]);
+    // Choose the first playable item, skipping any known-bad YouTube IDs
+    let idx = pos.index;
+    let offset = pos.offset;
+    for (let attempts = 0; attempts < config.items.length; attempts++) {
+      const item = config.items[idx];
+      const vid = resolveVideoId(config, item);
+      if (!badIds.has(vid)) {
+        return { title:item.title, duration:item.duration, offset, videoId:vid, index:idx };
+      }
+      idx = nextIndex(idx, config.items);
+      offset = 0; // when skipping to a later program, start at its beginning
+    }
+    // Fallback: original item
+    const fallback = config.items[pos.index];
+    return { title:fallback.title, duration:fallback.duration, offset:pos.offset, videoId:resolveVideoId(config, fallback), index:pos.index };
+  }, [config, tick, badIds]);
 
   const advance = useCallback(() => setTick(t=>t+1), []);
-  const onSkip = useCallback((code:number) => console.log(JSON.stringify({ ts:new Date().toISOString(), code, reason:"yt_error", id: now.videoId })), [now.videoId]);
+  const onSkip = useCallback((code:number) => {
+    try { console.log(JSON.stringify({ ts:new Date().toISOString(), code, reason:"yt_error", id: now.videoId })); } catch {}
+    setBadIds(prev => {
+      const next = new Set(prev);
+      next.add(now.videoId);
+      try { sessionStorage.setItem("bad_ids", JSON.stringify(Array.from(next))); } catch {}
+      return next;
+    });
+  }, [now.videoId]);
 
   return (
     <main className="min-h-screen bg-ink text-white px-3 py-6">
@@ -69,7 +100,7 @@ export default function Page(){
       )}
 
       <div className="relative w-full max-w-[1600px] mx-auto">
-        <Player videoId={now.videoId} startSeconds={now.offset} onAdvance={advance} onSkip={onSkip}/>
+        <Player videoId={now.videoId} startSeconds={now.offset} muted={muted} onAdvance={advance} onSkip={onSkip}/>
         <Overlay
           channel={config.channel}
           title={now.title}

@@ -5,14 +5,20 @@ import type { ChannelConfig } from "@/lib/schedule/types";
 
 export async function GET() {
   const config = cfg as unknown as ChannelConfig;
-  const serverTime = new Date().toISOString();
-  const pos = positionAt(new Date(serverTime), config.epochStart, config.items);
+  const now = new Date();
+  const serverTime = now.toISOString();
+  const pos = positionAt(now, config.epochStart, config.items);
   const item = config.items[pos.index];
-  return NextResponse.json({
+  const res = NextResponse.json({
     videoId: resolveVideoId(config, item),
     title: item.title,
     index: pos.index,
     offset: pos.offset,
-    serverTime
+    serverTime,
+    serverEpochMs: now.getTime(),
   });
+  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.headers.set("Pragma", "no-cache");
+  res.headers.set("Expires", "0");
+  return res;
 }
