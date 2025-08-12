@@ -1,0 +1,45 @@
+{
+  "name": "midwest-tv",
+  "version": "0.1.0",
+  "description": "24/7 Midwest Scene TV - Deterministic YouTube channel with bumpers",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "chs-now": "tsx scripts/chs-now.ts"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.0.5",
+    "@radix-ui/react-progress": "^1.0.3",
+    "@radix-ui/react-slot": "^1.0.2",
+    "@types/node": "^20.10.5",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "autoprefixer": "^10.4.16",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.0.0",
+    "framer-motion": "^12.23.12",
+    "lucide-react": "^0.303.0",
+    "next": "14.0.4",
+    "postcss": "^8.4.32",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwind-merge": "^2.2.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.3",
+    "ytdl-core": "^4.11.5",
+    "ytpl": "^2.3.0"
+  },
+  "devDependencies": {
+    "@vitest/ui": "^1.1.0",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "14.0.4",
+    "tsx": "^4.7.0",
+    "vitest": "^1.1.0"
+  },
+  "license": "Apache-2.0"
+}

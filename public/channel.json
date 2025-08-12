@@ -1,0 +1,58 @@
+{
+  "channel": "Midwest Scene TV",
+  "epochStart": "2025-08-15T20:00:00Z",
+  "items": [
+    {
+      "kind": "yt",
+      "id": "dQw4w9WgXcQ",
+      "title": "Rick Astley — Never Gonna Give You Up",
+      "duration": 247
+    },
+    {
+      "kind": "yt",
+      "id": "9bZkp7q19f0",
+      "title": "PSY — GANGNAM STYLE",
+      "duration": 252
+    },
+    {
+      "kind": "bump",
+      "slug": "mw-ident-01",
+      "title": "Midwest Scene TV Ident",
+      "duration": 7
+    },
+    {
+      "kind": "yt",
+      "id": "kJQP7kiw5Fk",
+      "title": "Luis Fonsi — Despacito ft. Daddy Yankee",
+      "duration": 282
+    },
+    {
+      "kind": "yt",
+      "id": "y6120QOlsfU",
+      "title": "Sandstorm — Darude",
+      "duration": 225
+    },
+    {
+      "kind": "bump",
+      "slug": "mw-ident-01",
+      "title": "Midwest Scene TV Ident",
+      "duration": 7
+    },
+    {
+      "kind": "yt",
+      "id": "ZZ5LpwO-An4",
+      "title": "Haddaway — What Is Love",
+      "duration": 267
+    }
+  ],
+  "bumpers": {
+    "mw-ident-01": {
+      "kind": "yt",
+      "id": "dQw4w9WgXcQ"
+    }
+  },
+  "rules": {
+    "insertBumperEvery": 3,
+    "preferBumperAtWallClock": ["00", "30"]
+  }
+}
