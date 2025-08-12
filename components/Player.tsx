@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useYouTube } from "@/lib/hooks/useYouTube";
 import { useDriftSync } from "@/lib/hooks/useDriftSync";
 
@@ -9,6 +9,7 @@ export default function Player({ videoId, startSeconds, muted, onAdvance, onSkip
   const ref = useRef<HTMLDivElement|null>(null);
   const { ready, player, loadById, getCurrentTime, seekTo, setMuted } = useYouTube(ref);
   const badIds = useRef<Set<string>>(new Set());
+  const [isBuffering, setIsBuffering] = useState<boolean>(false);
 
   useEffect(() => { if (ready && videoId) loadById(videoId, startSeconds); }, [ready, videoId, startSeconds, loadById]);
   useDriftSync({ currentId: videoId, getCurrentTime, seekTo });
@@ -20,9 +21,15 @@ export default function Player({ videoId, startSeconds, muted, onAdvance, onSkip
   useEffect(() => {
     if (!player) return;
     let started = false;
+    setIsBuffering(true);
     const startTimer = setTimeout(() => { if (!started) { badIds.current.add(videoId); onSkip(599); onAdvance(); } }, 2000);
 
-    function onPlayback(e:any){ if (e.data === window.YT?.PlayerState.PLAYING) started = true; }
+    function onPlayback(e:any){
+      const PS = window.YT?.PlayerState;
+      if (e.data === PS?.PLAYING) { started = true; setIsBuffering(false); }
+      if (e.data === PS?.BUFFERING) { setIsBuffering(true); }
+      if (e.data === PS?.PAUSED) { setIsBuffering(false); }
+    }
     function onStateChange(e:any){ if (e.data === window.YT?.PlayerState.ENDED) onAdvance(); }
     function onError(code:number){ badIds.current.add(videoId); onSkip(code); onAdvance(); }
 
@@ -38,5 +45,10 @@ export default function Player({ videoId, startSeconds, muted, onAdvance, onSkip
 
   return <div className="relative w-full max-w-[1600px] mx-auto aspect-video bg-black rounded-xl overflow-hidden shadow-screen vignette grain">
     <div ref={ref} className="absolute inset-0" />
+    {isBuffering && (
+      <div className="absolute inset-0 grid place-items-center z-10">
+        <div className="glass rounded-full px-4 py-2 text-sm opacity-90">Buffering…</div>
+      </div>
+    )}
   </div>;
 }

@@ -25,7 +25,15 @@ export default function Page(){
   const [showGuide, setShowGuide] = useState(false);
   const [tick, setTick] = useState(0);
   const [serverTime, setServerTime] = useState<string>("");
-  const [badIds, setBadIds] = useState<Set<string>>(new Set());
+  const [badIds, setBadIds] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem("bad_ids");
+        if (raw) return new Set(JSON.parse(raw));
+      } catch {}
+    }
+    return new Set();
+  });
 
   useEffect(()=>{ const id=setInterval(()=>setTick(t=>t+1),1000); return ()=>clearInterval(id); },[]);
 
@@ -70,6 +78,7 @@ export default function Page(){
     setBadIds(prev => {
       const next = new Set(prev);
       next.add(now.videoId);
+      try { sessionStorage.setItem("bad_ids", JSON.stringify(Array.from(next))); } catch {}
       return next;
     });
   }, [now.videoId]);
