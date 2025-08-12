@@ -38,6 +38,7 @@ async function postTelemetry(req: Request, ev: { type: string; message: string; 
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const ACCEPT_LANG = process.env.YOUTUBE_ACCEPT_LANGUAGE || "en-US,en;q=0.9";
 const COOKIE = process.env.YOUTUBE_COOKIE || "";
+const COOKIES_FILE = process.env.YOUTUBE_COOKIES_FILE || "";
 
 async function extractWithYtdlCore(id: string){
   const requestOptions = { headers: { "user-agent": UA, "accept-language": ACCEPT_LANG, ...(COOKIE ? { cookie: COOKIE } : {}) } } as any;
@@ -149,8 +150,11 @@ function execFile(cmd: string, args: string[], timeoutMs = 8000): Promise<{ stdo
 async function extractWithYtDlpCmd(id: string){
   const bin = resolveYtDlpBinary();
   const url = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
-  const args = ["-J", "--no-warnings", "--no-check-certificates", "--skip-download", url];
-  const { stdout } = await execFile(bin, args, 12000);
+  const args = ["-J", "--no-warnings", "--no-check-certificates", "--skip-download", "--add-header", `User-Agent: ${UA}`, "--add-header", `Accept-Language: ${ACCEPT_LANG}`];
+  if (COOKIE) { args.push("--add-header", `Cookie: ${COOKIE}`); }
+  if (COOKIES_FILE && existsSync(COOKIES_FILE)) { args.push("--cookies", COOKIES_FILE); }
+  args.push(url);
+  const { stdout } = await execFile(bin, args, 15000);
   const json: any = JSON.parse(stdout);
   const formats: any[] = Array.isArray(json?.formats) ? json.formats : [];
   const progressive = formats
