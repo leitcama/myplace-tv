@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import ytdl from "ytdl-core";
 
 // Simple in-memory cache and rate limiting (per-process)
-const cache = new Map<string, { data: { url: string; itag: number; qualityLabel?: string }; expires: number }>();
+const cache = new Map<string, { data: { url: string; itag: number; qualityLabel?: string } | { variants: Array<{ url: string; itag: number; qualityLabel?: string; bitrate?: number }> }; expires: number }>();
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 const COOLDOWN_MS = 5 * 1000; // avoid thrashing per id
 const lastFetchAt = new Map<string, number>();
@@ -22,29 +22,36 @@ function takeToken(): boolean {
   return false;
 }
 
-function getClientKey(req: Request) {
-  try {
-    const xf = req.headers.get("x-forwarded-for") || "";
-    return xf.split(",")[0].trim() || "unknown";
-  } catch { return "unknown"; }
-}
-
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   try {
     const id = params.id;
     if (!id) return NextResponse.json({ error: "missing_id" }, { status: 400 });
 
+    const urlObj = new URL(req.url);
+    const wantProgressiveList = urlObj.searchParams.get("progressive") === "1" || urlObj.searchParams.get("all") === "1";
+
     // Serve from cache if valid
     const cached = cache.get(id);
     const now = Date.now();
     if (cached && cached.expires > now) {
-      return NextResponse.json(cached.data, { headers: { "x-cache": "hit" } });
+      const body = cached.data as any;
+      // ensure shape matches request type; if we have variants and caller wants single, return top
+      if (!wantProgressiveList && "variants" in body) {
+        const top = body.variants[0];
+        return NextResponse.json({ url: top.url, itag: top.itag, qualityLabel: top.qualityLabel }, { headers: { "x-cache": "hit" } });
+      }
+      return NextResponse.json(body, { headers: { "x-cache": "hit" } });
     }
 
     // Cooldown enforcement
     const last = lastFetchAt.get(id) || 0;
     if (now - last < COOLDOWN_MS && cached) {
-      return NextResponse.json(cached.data, { headers: { "x-cache": "cooldown" } });
+      const body = cached.data as any;
+      if (!wantProgressiveList && "variants" in body) {
+        const top = body.variants[0];
+        return NextResponse.json({ url: top.url, itag: top.itag, qualityLabel: top.qualityLabel }, { headers: { "x-cache": "cooldown" } });
+      }
+      return NextResponse.json(body, { headers: { "x-cache": "cooldown" } });
     }
 
     // Rate limiting (global)
@@ -56,11 +63,23 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     lastFetchAt.set(id, now);
 
     const info = await ytdl.getInfo(id);
-    // Prefer mp4 video+audio progressive; fallback to highest quality with URL
-    const progressive = ytdl.filterFormats(info.formats, "audioandvideo").filter(f => f.container === "mp4" && !!f.url);
-    const fallback = info.formats.filter(f => !!f.url);
+    // Progressive mp4: audio+video in one URL
+    const progressive = ytdl.filterFormats(info.formats, "audioandvideo")
+      .filter(f => f.container === "mp4" && !!f.url)
+      .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }))
+      .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
 
-    const chosen = (progressive.sort((a,b)=>(b.bitrate||0)-(a.bitrate||0))[0]) || fallback[0];
+    // Fallback: any with URL
+    const fallback = info.formats.filter(f => !!f.url)
+      .map(f => ({ url: f.url, itag: f.itag, qualityLabel: f.qualityLabel, bitrate: f.bitrate || f.averageBitrate }));
+
+    if (wantProgressiveList && progressive.length > 0) {
+      const data = { variants: progressive } as const;
+      cache.set(id, { data: data as any, expires: now + CACHE_TTL_MS });
+      return NextResponse.json(data, { headers: { "x-cache": "miss" } });
+    }
+
+    const chosen = progressive[0] || fallback[0];
     if (!chosen?.url) return NextResponse.json({ error: "no_url" }, { status: 404 });
 
     const data = { url: chosen.url, itag: chosen.itag, qualityLabel: chosen.qualityLabel };
