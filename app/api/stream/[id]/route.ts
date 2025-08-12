@@ -170,6 +170,22 @@ async function extractWithYtDlpCmd(id: string){
   return { progressive, fallback };
 }
 
+async function extractWithExternal(id: string){
+  const raw = process.env.EXTRACTOR_URLS || "";
+  const urls = raw.split(",").map(s=>s.trim()).filter(Boolean);
+  const errs: string[] = [];
+  for (const base of urls){
+    try{
+      const u = `${base.replace(/\/$/,"")}/resolve?id=${encodeURIComponent(id)}&progressive=1`;
+      const j: any = await fetchJsonWithTimeout(u, { headers: { accept: "application/json" }, timeoutMs: 6000 });
+      const variants = (j.variants || j.progressive || []).filter((v:any)=>v?.url);
+      if (variants.length) return { progressive: variants, fallback: variants, source:`ext:${base}` } as const;
+      errs.push(`${base}:empty`);
+    } catch(e:any){ errs.push(`${base}:${String(e?.message||e)}`); }
+  }
+  throw new Error(`ext_all_failed:${errs.join("|")}`);
+}
+
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   const trace = Math.random().toString(36).slice(2);
   try {
@@ -178,7 +194,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
     const urlObj = new URL(req.url);
     const wantProgressiveList = urlObj.searchParams.get("progressive") === "1" || urlObj.searchParams.get("all") === "1";
-    const forceSource = urlObj.searchParams.get("source"); // "piped" | "invidious" | "ytdlp" to force
+    const forceSource = urlObj.searchParams.get("source"); // "external" | "piped" | "invidious" | "ytdlp" | default core
     const instanceOverride = urlObj.searchParams.get("instance") || process.env.PIPED_INSTANCE || undefined;
     const verbose = urlObj.searchParams.get("verbose") === "1";
 
@@ -216,23 +232,29 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     let progressive: Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }> = [];
     let fallback: Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }> = [];
 
+    const tryExternal = async () => { const r = await extractWithExternal(id); progressive = r.progressive as any; fallback = r.fallback as any; };
     const tryCore = async () => { const r = await extractWithYtdlCore(id); progressive = r.progressive; fallback = r.fallback; };
     const tryYtDlp = async () => { const r = await extractWithYtDlpCmd(id); progressive = r.progressive; fallback = r.fallback; };
     const tryPiped = async () => { const r = await extractWithPiped(id, instanceOverride); progressive = r.progressive; fallback = r.fallback; };
     const tryInv = async () => { const r = await extractWithInvidious(id); progressive = r.progressive; fallback = r.fallback; };
 
-    let source: "core"|"ytdlp"|"piped"|"invidious" = "core";
+    let source: "external"|"core"|"ytdlp"|"piped"|"invidious" = "core";
     const errors: string[] = [];
 
     try {
-      if (forceSource === "piped") { await tryPiped(); source = "piped"; }
+      if (forceSource === "external") { await tryExternal(); source = "external"; }
+      else if (forceSource === "piped") { await tryPiped(); source = "piped"; }
       else if (forceSource === "invidious") { await tryInv(); source = "invidious"; }
       else if (forceSource === "ytdlp") { await tryYtDlp(); source = "ytdlp"; }
+      else if ((process.env.EXTRACTOR_URLS||"").trim()) { await tryExternal(); source = "external"; }
       else { await tryCore(); source = "core"; }
       if (!progressive.length && !fallback.length) throw new Error("empty_formats");
     } catch (e:any) {
       errors.push(String(e?.message||e));
-      try { await tryYtDlp(); source = "ytdlp"; }
+      try {
+        if ((process.env.EXTRACTOR_URLS||"").trim() && source !== "external") { await tryExternal(); source = "external"; }
+        else { await tryYtDlp(); source = "ytdlp"; }
+      }
       catch (e1:any) { errors.push(String(e1?.message||e1)); try { await tryPiped(); source = "piped"; } catch (e2:any){ errors.push(String(e2?.message||e2)); try { await tryInv(); source = "invidious"; } catch (e3:any){ errors.push(String(e3?.message||e3)); } } }
       if (!progressive.length && !fallback.length){
         const detail = errors.join(" | ");
