@@ -34,7 +34,12 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
 
   const loadDirect = useCallback(async (id:string, start:number) => {
     try{
-      const r = await fetch(`/api/stream/${encodeURIComponent(id)}?progressive=1`, { cache: "no-store" });
+      const sp = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+      const qs = new URLSearchParams();
+      qs.set("progressive", "1");
+      if (sp.get("source")) qs.set("source", sp.get("source")!);
+      if (sp.get("verbose")) qs.set("verbose", sp.get("verbose")!);
+      const r = await fetch(`/api/stream/${encodeURIComponent(id)}?${qs.toString()}`, { cache: "no-store" });
       if (!r.ok) throw new Error(`stream_meta_${r.status}`);
       const data = await r.json();
       const list = (data.variants || []) as Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }>;
