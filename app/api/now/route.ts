@@ -3,6 +3,8 @@ import cfg from "@/public/channel.json";
 import { positionAt, resolveVideoId } from "@/lib/schedule/now";
 import type { ChannelConfig } from "@/lib/schedule/types";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const config = cfg as unknown as ChannelConfig;
   const serverTime = new Date().toISOString();
@@ -14,5 +16,9 @@ export async function GET() {
     index: pos.index,
     offset: pos.offset,
     serverTime
+  }, {
+    headers: {
+      "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate"
+    }
   });
 }
