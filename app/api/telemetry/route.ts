@@ -8,10 +8,32 @@ const telemetryBuffer: Array<{
   meta?: Record<string, unknown>;
 }> = [];
 
-const MAX_ENTRIES = 500;
+const MAX_ENTRIES = 5000;
 
-export async function GET() {
-  return NextResponse.json({ count: telemetryBuffer.length, events: telemetryBuffer.slice(-100) });
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const typeParam = url.searchParams.get("type"); // single or comma-separated
+  const sinceParam = url.searchParams.get("since");
+  const q = url.searchParams.get("q");
+  const limitParam = url.searchParams.get("limit");
+  const limit = Math.max(1, Math.min(Number(limitParam) || 100, 500));
+
+  let events = telemetryBuffer;
+  if (typeParam) {
+    const types = new Set(typeParam.split(",").map(s=>s.trim()).filter(Boolean));
+    events = events.filter(e => types.has(e.type));
+  }
+  if (sinceParam) {
+    const t0 = Date.parse(sinceParam);
+    if (!isNaN(t0)) events = events.filter(e => Date.parse(e.ts) >= t0);
+  }
+  if (q) {
+    const needle = q.toLowerCase();
+    events = events.filter(e => (e.type?.toLowerCase().includes(needle)) || (e.message||"").toLowerCase().includes(needle));
+  }
+
+  const sliced = events.slice(-limit);
+  return NextResponse.json({ count: telemetryBuffer.length, returned: sliced.length, events: sliced });
 }
 
 export async function POST(req: Request) {

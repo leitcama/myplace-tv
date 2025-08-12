@@ -29,27 +29,41 @@ async function getNowPlaying(): Promise<{ videoId: string; offset: number; title
   return fetchJson(`${BASE_URL}/api/now`);
 }
 
-async function validateStream(videoId: string){
-  try{
-    const res = await fetchJson<{ url: string; itag: number; qualityLabel?: string }>(`${BASE_URL}/api/stream/${encodeURIComponent(videoId)}`);
-    // Try HEAD; if it fails, try a tiny ranged GET
-    let ok = false;
-    try {
-      const head = await fetch(res.url, { method: "HEAD" });
-      ok = head.ok;
-    } catch {}
-    if (!ok) {
-      const tiny = await fetch(res.url, { method: "GET", headers: { Range: "bytes=0-1" } });
-      ok = tiny.ok;
-    }
-    if (!ok) throw new Error(`unreachable`);
+async function checkUrlReachable(url: string){
+  // Try HEAD, then tiny Range GET
+  try {
+    const h = await fetch(url, { method: "HEAD" });
+    if (h.ok) return true;
+  } catch {}
+  try {
+    const g = await fetch(url, { method: "GET", headers: { Range: "bytes=0-1" } });
+    if (g.ok) return true;
+  } catch {}
+  return false;
+}
 
-    await postTelemetry({ type: "stream_ok", message: videoId, meta: { itag: res.itag, q: res.qualityLabel } });
-    return true;
-  } catch (e:any){
-    await postTelemetry({ type: "stream_fail", message: videoId, meta: { error: e?.message } });
-    return false;
+async function resolveStream(videoId: string){
+  return fetchJson<{ url: string; itag: number; qualityLabel?: string }>(`${BASE_URL}/api/stream/${encodeURIComponent(videoId)}`);
+}
+
+async function validateStream(videoId: string, maxAttempts = 3){
+  let lastError: any;
+  for (let attempt=1; attempt<=maxAttempts; attempt++){
+    try{
+      const res = await resolveStream(videoId);
+      const reachable = await checkUrlReachable(res.url);
+      if (reachable){
+        await postTelemetry({ type: "stream_ok", message: videoId, meta: { attempt, itag: res.itag, q: res.qualityLabel } });
+        return true;
+      } else {
+        lastError = new Error("unreachable");
+      }
+    } catch (e:any){ lastError = e; }
+    const backoff = Math.min(15000, 1000 * 2 ** (attempt-1)) + Math.floor(Math.random()*500);
+    await sleep(backoff);
   }
+  await postTelemetry({ type: "stream_fail", message: videoId, meta: { error: String(lastError?.message||lastError), attempts: maxAttempts } });
+  return false;
 }
 
 function loadConfig(): ChannelConfig {
