@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import ytdl from "ytdl-core";
 import { execFile as _execFile } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 
 export const dynamic = "force-dynamic";
 
@@ -123,6 +125,16 @@ async function extractWithInvidious(id: string, instanceOverride?: string){
   throw new Error(`invidious_all_failed:${errs.map(e=>`${e.base}:${e.err}`).join(",")}`);
 }
 
+function resolveYtDlpBinary(): string {
+  const candidates = [
+    process.env.YTDLP_PATH,
+    resolvePath(process.cwd(), "scripts/yt-dlp"),
+    "yt-dlp"
+  ].filter(Boolean) as string[];
+  for (const p of candidates){ try { if (p && (p === "yt-dlp" || existsSync(p))) return p; } catch {} }
+  throw new Error("yt-dlp_not_found");
+}
+
 function execFile(cmd: string, args: string[], timeoutMs = 8000): Promise<{ stdout:string; stderr:string }>{
   return new Promise((resolve, reject) => {
     const cp = _execFile(cmd, args, { env: process.env, maxBuffer: 10*1024*1024 }, (err, stdout, stderr) => {
@@ -135,17 +147,17 @@ function execFile(cmd: string, args: string[], timeoutMs = 8000): Promise<{ stdo
 }
 
 async function extractWithYtDlpCmd(id: string){
-  const bin = process.env.YTDLP_PATH || "yt-dlp";
+  const bin = resolveYtDlpBinary();
   const url = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
   const args = ["-J", "--no-warnings", "--no-check-certificates", "--skip-download", url];
   const { stdout } = await execFile(bin, args, 12000);
   const json: any = JSON.parse(stdout);
   const formats: any[] = Array.isArray(json?.formats) ? json.formats : [];
   const progressive = formats
-    .filter(f => f?.url && ((f.ext === "mp4") || ((f.mime_type||f.mimeType||"").includes("mp4"))) && f.acodec !== "none" && f.vcodec !== "none")
-    .map(f => ({ url: f.url, itag: Number(f.itag)||0, qualityLabel: f.format_note || f.format || f.resolution, bitrate: Number(f.tbr)||Number(f.bitrate)||0 }))
+    .filter((f:any) => f?.url && ((f.ext === "mp4") || ((f.mime_type||f.mimeType||"").includes("mp4"))) && f.acodec !== "none" && f.vcodec !== "none")
+    .map((f:any) => ({ url: f.url, itag: Number(f.itag)||0, qualityLabel: f.format_note || f.format || f.resolution, bitrate: Number(f.tbr)||Number(f.bitrate)||0 }))
     .sort((a,b)=> (b.bitrate||0) - (a.bitrate||0));
-  const fallback = formats.filter(f=>f?.url).map(f=>({ url: f.url, itag: Number(f.itag)||0, qualityLabel: f.format_note || f.format || f.resolution, bitrate: Number(f.tbr)||Number(f.bitrate)||0 }));
+  const fallback = formats.filter((f:any)=>f?.url).map((f:any)=>({ url: f.url, itag: Number(f.itag)||0, qualityLabel: f.format_note || f.format || f.resolution, bitrate: Number(f.tbr)||Number(f.bitrate)||0 }));
   return { progressive, fallback };
 }
 
