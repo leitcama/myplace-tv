@@ -13,7 +13,8 @@
     "chs-now": "tsx scripts/chs-now.ts",
     "agent": "node --env-file=.env --enable-source-maps --no-warnings --loader tsx scripts/agent.ts",
     "tunnel": "node scripts/tunnel.js",
-    "serve": "PORT=3000 next start"
+    "serve": "PORT=3000 next start",
+    "diagnose": "tsx scripts/diagnose.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
