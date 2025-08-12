@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useYouTube } from "@/lib/hooks/useYouTube";
 import { useDriftSync } from "@/lib/hooks/useDriftSync";
 
+declare global { interface Window { Hls?: any; } }
+
 export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
   videoId:string; startSeconds:number; onAdvance:()=>void; onSkip:(code:number)=>void;
 }){
@@ -32,19 +34,56 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
     return mid;
   }, []);
 
+  async function ensureHls(): Promise<any>{
+    if (typeof window === "undefined") return null;
+    if (window.Hls) return window.Hls;
+    await new Promise<void>((resolve, reject) => {
+      const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"; s.async = true;
+      s.onload = () => resolve(); s.onerror = () => reject(new Error("hls_cdn_fail"));
+      document.head.appendChild(s);
+    });
+    return window.Hls;
+  }
+
+  const fetchVariants = useCallback(async (id:string) => {
+    const sp = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+    const qs = new URLSearchParams();
+    qs.set("progressive", "1");
+    if (sp.get("source")) qs.set("source", sp.get("source")!);
+    if (sp.get("verbose")) qs.set("verbose", sp.get("verbose")!);
+    const r = await fetch(`/api/stream/${encodeURIComponent(id)}?${qs.toString()}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`stream_meta_${r.status}`);
+    const data = await r.json();
+    const list = (data.variants || []) as Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }>;
+    if (!list.length) throw new Error("no_variants");
+    setVariants(list);
+    return list;
+  }, []);
+
+  const loadHls = useCallback(async (id:string, start:number) => {
+    try{
+      const el = videoRef.current; if (!el) throw new Error("no_video");
+      const list = (variants.length ? variants : await fetchVariants(id));
+      const v = chooseVariant(list); if (!v) throw new Error("no_choice");
+      const srcForPack = proxify(v.url);
+      const masterUrl = `/api/hls/${encodeURIComponent(id)}?kind=master&src=${encodeURIComponent(srcForPack)}`;
+      const HlsCtor = await ensureHls();
+      if (HlsCtor && HlsCtor.isSupported?.()){
+        const hls = new HlsCtor({});
+        hls.loadSource(masterUrl);
+        hls.attachMedia(el);
+        hls.on(HlsCtor.Events.MANIFEST_PARSED, () => { el.currentTime = start; el.play().catch(()=>{}); });
+        return true;
+      } else if (el.canPlayType("application/vnd.apple.mpegurl")){
+        el.src = masterUrl; el.currentTime = start; await el.play(); return true;
+      }
+      return false;
+    } catch(e:any){ setError("hls_fail", { err: String(e?.message||e) }); return false; }
+  }, [variants, chooseVariant, fetchVariants, setError]);
+
   const loadDirect = useCallback(async (id:string, start:number) => {
     try{
-      const sp = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-      const qs = new URLSearchParams();
-      qs.set("progressive", "1");
-      if (sp.get("source")) qs.set("source", sp.get("source")!);
-      if (sp.get("verbose")) qs.set("verbose", sp.get("verbose")!);
-      const r = await fetch(`/api/stream/${encodeURIComponent(id)}?${qs.toString()}`, { cache: "no-store" });
-      if (!r.ok) throw new Error(`stream_meta_${r.status}`);
-      const data = await r.json();
-      const list = (data.variants || []) as Array<{ url:string; itag:number; qualityLabel?:string; bitrate?:number }>;
-      if (!list.length) throw new Error("no_variants");
-      setVariants(list);
+      const list = (variants.length ? variants : await fetchVariants(id));
       const v = chooseVariant(list);
       if (!v) throw new Error("no_choice");
       const el = videoRef.current; if (!el) throw new Error("no_video");
@@ -61,7 +100,7 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
       setError("direct_fail", { id, err: String(e?.message||e) });
       return false;
     }
-  }, [chooseVariant, setError]);
+  }, [variants, chooseVariant, fetchVariants, setError]);
 
   useDriftSync({ currentId: videoId, getCurrentTime: async ()=> videoRef.current?.currentTime || 0, seekTo: s => { const el=videoRef.current; if (el) el.currentTime = s; } });
 
@@ -69,14 +108,17 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
     setUsingIframe(false);
     setVariants([]);
     setCurrentUrl("");
-    const ok = await loadDirect(videoId, startSeconds);
+    const sp = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+    const preferHls = sp.get("hls") === "1";
+    let ok = false;
+    if (preferHls) ok = await loadHls(videoId, startSeconds);
+    if (!ok) ok = await loadDirect(videoId, startSeconds);
     if (cancelled) return;
     if (!ok){
       setUsingIframe(true);
-      setError("fallback_iframe", { id: videoId });
       if (ready) loadById(videoId, startSeconds);
     }
-  })(); return ()=>{ cancelled=true; const el=videoRef.current; if (el) { el.pause(); el.removeAttribute("src"); el.load(); } }; }, [videoId, startSeconds, ready, loadById, loadDirect, setError]);
+  })(); return ()=>{ cancelled=true; const el=videoRef.current; if (el) { el.pause(); el.removeAttribute("src"); el.load(); } }; }, [videoId, startSeconds, ready, loadById, loadDirect, loadHls]);
 
   useEffect(()=>{
     const el = videoRef.current; if (!el) return;
