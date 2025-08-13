@@ -6,6 +6,7 @@ import GuideModal from "@/components/GuideModal";
 import cfg from "@/public/channel.json";
 import type { ChannelConfig } from "@/lib/schedule/types";
 import { positionAt, resolveVideoId, nextN } from "@/lib/schedule/now";
+import { usePrefetch, useSeamlessTransitions } from "@/lib/hooks/usePrefetch";
 
 export default function Page(){
   const config = cfg as unknown as ChannelConfig;
@@ -66,8 +67,35 @@ export default function Page(){
     return { title:item.title, duration:item.duration, offset:pos.offset, videoId:resolveVideoId(config,item), index:pos.index };
   }, [config, tick]);
 
-  const advance = useCallback(() => setTick(t=>t+1), []);
-  const onSkip = useCallback((code:number) => console.log(JSON.stringify({ ts:new Date().toISOString(), code, reason:"yt_error", id: now.videoId })), [now.videoId]);
+  // Prefetch and seamless transition hooks
+  const { startPrefetch, stopPrefetch, manualPrefetch } = usePrefetch();
+  const { startTransition, endTransition } = useSeamlessTransitions();
+
+  // Start prefetching when consented
+  useEffect(() => {
+    if (consented) {
+      startPrefetch();
+    } else {
+      stopPrefetch();
+    }
+  }, [consented, startPrefetch, stopPrefetch]);
+
+  // Track transitions when video changes
+  useEffect(() => {
+    if (consented) {
+      startTransition();
+    }
+  }, [now.videoId, consented, startTransition]);
+
+  const advance = useCallback(() => {
+    endTransition(now.videoId);
+    setTick(t=>t+1);
+  }, [now.videoId, endTransition]);
+  
+  const onSkip = useCallback((code:number) => {
+    endTransition(now.videoId);
+    console.log(JSON.stringify({ ts:new Date().toISOString(), code, reason:"yt_error", id: now.videoId }));
+  }, [now.videoId, endTransition]);
 
   return (
     <main className="min-h-screen bg-ink text-white px-3 py-6">

@@ -15,7 +15,7 @@ const lruCache = new LRUCache<string, any>({
 });
 
 // Cache key generators
-export function cacheKey(type: 'playerResponse' | 'resolveOutcome' | 'decipherContext', videoId: string, clientProfile?: string, region?: string) {
+export function cacheKey(type: 'playerResponse' | 'resolveOutcome' | 'decipherContext' | 'prefetch', videoId: string, clientProfile?: string, region?: string) {
   const parts = [type, videoId];
   if (clientProfile) parts.push(clientProfile);
   if (region) parts.push(region);

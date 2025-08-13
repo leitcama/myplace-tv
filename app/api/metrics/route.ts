@@ -3,6 +3,7 @@ import { getCacheMetrics } from "@/lib/cache";
 import { getInvidiousStats } from "@/lib/invidious";
 import { getDecipherStats } from "@/lib/decipher";
 import { getCanaryStats, getCanaryHealth } from "@/lib/canary";
+import { getPrefetchStats, getPrefetchHealth } from "@/lib/prefetch";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,6 +15,8 @@ export async function GET() {
     const decipherStats = getDecipherStats();
     const canaryStats = getCanaryStats();
     const canaryHealth = getCanaryHealth();
+    const prefetchStats = getPrefetchStats();
+    const prefetchHealth = getPrefetchHealth();
     
     const hitRate = cacheMetrics.hits + cacheMetrics.misses > 0 
       ? (cacheMetrics.hits / (cacheMetrics.hits + cacheMetrics.misses) * 100).toFixed(2)
@@ -45,6 +48,13 @@ export async function GET() {
         consecutiveFailures: canaryStats.consecutiveFailures,
         alertHistory: canaryStats.alertHistory,
         baseJsHashFailures: canaryStats.baseJsHashFailures,
+      },
+      prefetch: {
+        health: prefetchHealth,
+        activePrefetches: prefetchStats.activePrefetches,
+        historyLength: prefetchStats.historyLength,
+        successRate: `${prefetchStats.successRate.toFixed(1)}%`,
+        recentResults: prefetchStats.recentResults.slice(-5), // Last 5 results
       },
       system: {
         uptime: process.uptime(),

@@ -5,6 +5,7 @@ import { ResolveResponse, ResolveContext, ResolveError, CachedResolveResult, Cac
 import { getClientConfig, getOptimalClientProfile, detectRegion, CLIENT_CONFIGS } from "@/lib/clients";
 import { tryInvidious, getInvidiousStats } from "@/lib/invidious";
 import { decipherVideo, DecipherErrorType } from "@/lib/decipher";
+import { getPrefetchedManifest } from "@/lib/prefetch";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -246,6 +247,22 @@ export async function GET(req: Request) {
       requestedClientProfile,
       requestedRegion,
     });
+    
+    // Check for prefetched manifest first
+    const prefetchedManifest = await getPrefetchedManifest(videoId, clientProfile, detectedRegion);
+    if (prefetchedManifest) {
+      logWithContext('info', 'Using prefetched manifest', context, { 
+        latency: Date.now() - startTime,
+        tier: prefetchedManifest.tier,
+        type: prefetchedManifest.type,
+        correlationId: prefetchedManifest.correlationId,
+      });
+      
+      return NextResponse.json({
+        ...prefetchedManifest,
+        prefetched: true,
+      });
+    }
     
     // Check cache for resolve result
     const resolveKey = cacheKey('resolveOutcome', videoId, clientProfile, detectedRegion);
