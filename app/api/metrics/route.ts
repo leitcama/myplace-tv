@@ -8,6 +8,7 @@ import { getExpiryStats, getExpiryHealth } from "@/lib/expiry";
 import { getErrorStats, getErrorHealth } from "@/lib/error-taxonomy";
 import { getRecoveryStats, getRecoveryHealth } from "@/lib/error-recovery";
 import { getWatchdogStats, getWatchdogHealth } from "@/lib/enhanced-watchdog";
+import { getSyntheticStats, getSyntheticHealth } from "@/lib/synthetic-monitoring";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,6 +30,8 @@ export async function GET() {
     const recoveryHealth = getRecoveryHealth();
     const watchdogStats = getWatchdogStats();
     const watchdogHealth = getWatchdogHealth();
+    const syntheticStats = getSyntheticStats();
+    const syntheticHealth = getSyntheticHealth();
     
     const hitRate = cacheMetrics.hits + cacheMetrics.misses > 0 
       ? (cacheMetrics.hits / (cacheMetrics.hits + cacheMetrics.misses) * 100).toFixed(2)
@@ -105,6 +108,15 @@ export async function GET() {
         totalRecoveries: watchdogStats.totalRecoveries,
         averageRecoveryAttempts: watchdogStats.averageRecoveryAttempts.toFixed(1),
       },
+      synthetic: syntheticStats ? {
+        health: syntheticHealth,
+        config: syntheticStats.config,
+        lastRun: syntheticStats.lastRun,
+        consecutiveFailures: syntheticStats.consecutiveFailures,
+        alertHistory: syntheticStats.alertHistory,
+        isRunning: syntheticStats.isRunning,
+        nextRunTime: syntheticStats.nextRunTime,
+      } : null,
       system: {
         uptime: process.uptime(),
         memory: process.memoryUsage(),

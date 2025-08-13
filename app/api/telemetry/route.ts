@@ -55,6 +55,32 @@ const watchdogEvents: Array<{
   duration?: number;
 }> = [];
 
+// RUM events storage
+const rumEvents: Array<{
+  type: string;
+  timestamp: string;
+  videoId: string;
+  sessionId: string;
+  correlationId?: string;
+  userAgent?: string;
+  networkType?: string;
+  deviceInfo?: any;
+  metadata?: Record<string, any>;
+}> = [];
+
+// Synthetic test runs storage
+const syntheticTestRuns: Array<{
+  id: string;
+  timestamp: string;
+  totalTests: number;
+  successfulTests: number;
+  failedTests: number;
+  successRate: number;
+  averageDuration: number;
+  averageTTFF: number;
+  alerts: string[];
+}> = [];
+
 export async function POST(req: Request) {
   try {
     const data = await req.json();
@@ -196,6 +222,50 @@ export async function POST(req: Request) {
         type: data.eventType,
         errorType: data.errorType,
         recoveryAction: data.recoveryAction,
+      });
+    }
+    
+    // Handle RUM events
+    if (data.type === 'rum_events' && Array.isArray(data.events)) {
+      rumEvents.push(...data.events);
+      
+      // Keep only last 1000 RUM events
+      if (rumEvents.length > 1000) {
+        rumEvents.splice(0, rumEvents.length - 1000);
+      }
+      
+      console.log('RUM events tracked:', {
+        count: data.events.length,
+        sessionId: data.sessionId,
+        types: Array.from(new Set(data.events.map((e: any) => e.type))),
+      });
+    }
+    
+    // Handle synthetic test runs
+    if (data.type === 'synthetic_test_run') {
+      syntheticTestRuns.push({
+        id: data.id,
+        timestamp: data.timestamp,
+        totalTests: data.totalTests,
+        successfulTests: data.successfulTests,
+        failedTests: data.failedTests,
+        successRate: data.successRate,
+        averageDuration: data.averageDuration,
+        averageTTFF: data.averageTTFF,
+        alerts: data.alerts || [],
+      });
+      
+      // Keep only last 50 synthetic test runs
+      if (syntheticTestRuns.length > 50) {
+        syntheticTestRuns.splice(0, syntheticTestRuns.length - 50);
+      }
+      
+      console.log('Synthetic test run tracked:', {
+        id: data.id,
+        totalTests: data.totalTests,
+        successRate: `${data.successRate.toFixed(1)}%`,
+        averageTTFF: `${data.averageTTFF.toFixed(0)}ms`,
+        alerts: data.alerts?.length || 0,
       });
     }
     
@@ -368,6 +438,59 @@ export async function GET() {
           errorType: d.errorType,
           recoveryAction: d.recoveryAction,
           timestamp: d.timestamp,
+        })),
+      };
+    }
+    
+    // RUM metrics
+    if (rumEvents.length > 0) {
+      const rumTypeCounts = rumEvents.reduce((acc, event) => {
+        acc[event.type] = (acc[event.type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const sessionCounts = rumEvents.reduce((acc, event) => {
+        acc[event.sessionId] = (acc[event.sessionId] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const uniqueSessions = Object.keys(sessionCounts).length;
+      
+      result.rum = {
+        total: rumEvents.length,
+        uniqueSessions,
+        eventTypeCounts: rumTypeCounts,
+        sessionCounts,
+        recent: rumEvents.slice(-10).map(d => ({
+          type: d.type,
+          videoId: d.videoId,
+          sessionId: d.sessionId,
+          networkType: d.networkType,
+          timestamp: d.timestamp,
+        })),
+      };
+    }
+    
+    // Synthetic test metrics
+    if (syntheticTestRuns.length > 0) {
+      const recentRuns = syntheticTestRuns.slice(-10);
+      const avgSuccessRate = recentRuns.reduce((sum, run) => sum + run.successRate, 0) / recentRuns.length;
+      const avgTTFF = recentRuns.reduce((sum, run) => sum + run.averageTTFF, 0) / recentRuns.length;
+      const avgDuration = recentRuns.reduce((sum, run) => sum + run.averageDuration, 0) / recentRuns.length;
+      
+      result.synthetic = {
+        total: syntheticTestRuns.length,
+        recent: recentRuns.length,
+        averageSuccessRate: `${avgSuccessRate.toFixed(1)}%`,
+        averageTTFF: Math.round(avgTTFF),
+        averageDuration: Math.round(avgDuration),
+        recentRuns: recentRuns.map(run => ({
+          id: run.id,
+          timestamp: run.timestamp,
+          totalTests: run.totalTests,
+          successRate: `${run.successRate.toFixed(1)}%`,
+          averageTTFF: Math.round(run.averageTTFF),
+          alerts: run.alerts.length,
         })),
       };
     }
