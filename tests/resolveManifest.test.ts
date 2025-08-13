@@ -1,13 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("ytdl-core", () => ({
-  default: {},
+  default: {
+    getInfo: vi.fn(async (_id:string) => ({
+      formats: [
+        { hasAudio: true, hasVideo: true, container: "mp4", url: "https://rr1---sn-a5mek.googlevideo.com/videoplayback?expire=9999999999", itag: 22 }
+      ],
+      playerResponse: { streamingData: {} }
+    }))
+  },
   getInfo: vi.fn(async (_id:string) => ({
     formats: [
       { hasAudio: true, hasVideo: true, container: "mp4", url: "https://rr1---sn-a5mek.googlevideo.com/videoplayback?expire=9999999999", itag: 22 }
     ],
     playerResponse: { streamingData: {} }
   }))
+}));
+
+// Mock cache
+vi.mock("@/lib/cache", () => ({
+  cache: {
+    get: vi.fn(async () => null),
+    set: vi.fn(async () => {}),
+    delete: vi.fn(async () => {}),
+    clear: vi.fn(async () => {}),
+  },
+  cacheKey: vi.fn((type, videoId) => `${type}:${videoId}`),
+  generateCorrelationId: vi.fn(() => "test-correlation-id"),
+  logWithContext: vi.fn(),
+  incrementCacheMetric: vi.fn(),
 }));
 
 // Piped mock via global fetch
@@ -26,11 +47,19 @@ describe("/api/video/playback/resolve", () => {
     const body = await res.json();
     expect(body.type).toBe("file");
     expect(body.url).toMatch(/googlevideo/);
+    expect(body.tier).toBe("youtube");
+    expect(body.correlationId).toBe("test-correlation-id");
+    expect(body.timestamp).toBeDefined();
   });
 
   it("uses piped fallback when youtube tier throws", async () => {
+    const { cache } = await import("@/lib/cache");
+    (cache.get as any).mockImplementationOnce(async () => null); // Cache miss
+    (cache.get as any).mockImplementationOnce(async () => null); // Cache miss for resolve result
+    
     const ytdl = await import("ytdl-core");
-    (ytdl as any).getInfo.mockImplementationOnce(async () => { throw new Error("yt_down"); });
+    (ytdl.default.getInfo as any).mockImplementationOnce(async () => { throw new Error("yt_down"); });
+    
     g.fetch = vi.fn(async (_u:string) => ({ ok: true, json: async () => ({ dash: "https://piped.invalid/manifest.mpd" }) }));
     const mod = await import("../app/api/video/playback/resolve/route");
     const req = new Request("http://localhost/api/video/playback/resolve?videoId=abc");
@@ -39,5 +68,16 @@ describe("/api/video/playback/resolve", () => {
     const body = await res.json();
     expect(body.type).toBe("dash");
     expect(body.tier).toBe("piped");
+    expect(body.correlationId).toBe("test-correlation-id");
+  });
+
+  it("returns error for missing videoId", async () => {
+    const mod = await import("../app/api/video/playback/resolve/route");
+    const req = new Request("http://localhost/api/video/playback/resolve");
+    const res: Response = await (mod as any).GET(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBeDefined();
+    expect(body.error.code).toBe("unknown");
   });
 });

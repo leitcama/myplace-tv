@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ResolveResponse } from "@/types/resolver";
 
 export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, onError }:{
   videoId: string;
@@ -9,7 +10,8 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
   onError: (err: any) => void;
 }){
   const videoRef = useRef<HTMLVideoElement|null>(null);
-  const [src, setSrc] = useState<{ type:"dash"|"hls"|"file"; url:string }|null>(null);
+  const [src, setSrc] = useState<ResolveResponse|null>(null);
+  const [resolveError, setResolveError] = useState<string|null>(null);
 
   // Preconnect hint host
   const preconnectHost = useMemo(() => {
@@ -20,12 +22,38 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
     let cancelled = false;
     async function resolve(){
       try{
-        const r = await fetch(`/api/video/playback/resolve?videoId=${encodeURIComponent(videoId)}`, { cache:"no-store" });
-        if (!r.ok) throw new Error(`resolve_failed_${r.status}`);
-        const j = await r.json();
+        setResolveError(null);
+        const startTime = performance.now();
+        
+        const r = await fetch(`/api/video/playback/resolve?videoId=${encodeURIComponent(videoId)}`, { 
+          cache: "no-store" 
+        });
+        
+        if (!r.ok) {
+          const errorData = await r.json().catch(() => ({}));
+          throw new Error(`resolve_failed_${r.status}: ${errorData.error?.message || 'Unknown error'}`);
+        }
+        
+        const j: ResolveResponse = await r.json();
         if (cancelled) return;
-        if (j?.type && j?.url) setSrc({ type:j.type, url:j.url }); else throw new Error("no_source");
-      }catch(e){ onError(e); }
+        
+        if (j?.type && j?.url) {
+          setSrc(j);
+          // Log resolve performance
+          const resolveTime = performance.now() - startTime;
+          console.log(`Resolve completed in ${resolveTime.toFixed(1)}ms`, {
+            videoId,
+            tier: j.tier,
+            type: j.type,
+            correlationId: j.correlationId,
+          });
+        } else {
+          throw new Error("no_source");
+        }
+      }catch(e){ 
+        setResolveError(e instanceof Error ? e.message : String(e));
+        onError(e); 
+      }
     }
     resolve();
     return () => { cancelled = true; };
@@ -38,19 +66,53 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
 
     async function boot(){
       try{
+        const startTime = performance.now();
+        
         if (src.type === "dash"){
           const { default: shaka } = await import("shaka-player/dist/shaka-player.ui.js");
           if (destroyed) return;
           if (!shaka.Player.isBrowserSupported()) throw new Error("shaka_unsupported");
           player = new shaka.Player(videoRef.current);
-          // Minimal buffering for fast TTF
+          
+          // Optimized Shaka config for fast startup and reduced rebuffering
           player.configure({
-            streaming: { bufferingGoal: 10, rebufferingGoal: 2 },
-            abr: { defaultBandwidthEstimate: 3_000_000, enabled: true, switchInterval: 2 },
+            streaming: { 
+              bufferingGoal: 8, 
+              rebufferingGoal: 2,
+              jumpLargeGaps: true,
+              retryParameters: {
+                maxAttempts: 3,
+                baseDelay: 1000,
+                backoffFactor: 2,
+                fuzzFactor: 0.5,
+              }
+            },
+            abr: { 
+              defaultBandwidthEstimate: 2_000_000, // Lower initial estimate for faster startup
+              enabled: true, 
+              switchInterval: 1.5, // Faster quality switching
+              bandwidthUpdateInterval: 0.5,
+            },
+            manifest: {
+              retryParameters: {
+                maxAttempts: 3,
+                baseDelay: 1000,
+                backoffFactor: 2,
+                fuzzFactor: 0.5,
+              }
+            }
           });
-          player.addEventListener("error", (ev:any)=> onError(ev?.detail || ev));
+          
+          player.addEventListener("error", (ev:any)=> {
+            console.error("Shaka error:", ev?.detail || ev);
+            onError(ev?.detail || ev);
+          });
+          
           await player.load(src.url, startSeconds);
+          const loadTime = performance.now() - startTime;
+          console.log(`Shaka loaded in ${loadTime.toFixed(1)}ms`, { videoId, tier: src.tier });
           onStarted();
+          
         } else if (src.type === "hls"){
           // Prefer native HLS; if not supported, use hls.js
           const video = videoRef.current!;
@@ -58,16 +120,41 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
             video.src = src.url;
             video.currentTime = startSeconds;
             await video.play().catch(()=>{});
+            const loadTime = performance.now() - startTime;
+            console.log(`Native HLS loaded in ${loadTime.toFixed(1)}ms`, { videoId, tier: src.tier });
             onStarted();
           } else {
             const { default: Hls } = await import("hls.js");
             if (!(Hls as any).isSupported()) throw new Error("hls_unsupported");
-            player = new (Hls as any)({ lowLatencyMode: true, backBufferLength: 30 });
-            player.on((Hls as any).Events.ERROR, (_e:any, data:any)=> onError(data));
+            
+            player = new (Hls as any)({ 
+              lowLatencyMode: true, 
+              backBufferLength: 30,
+              maxBufferLength: 10, // Conservative buffer
+              maxMaxBufferLength: 12,
+              startLevel: 0, // Start at lowest quality for faster startup
+              capLevelToPlayerSize: true,
+              abrEwmaDefaultEstimate: 2_000_000, // Lower initial bandwidth estimate
+              abrBandWidthFactor: 0.95,
+              abrBandWidthUpFactor: 0.7,
+              abrMaxWithRealBitrate: true,
+            });
+            
+            player.on((Hls as any).Events.ERROR, (_e:any, data:any)=> {
+              console.error("HLS.js error:", data);
+              onError(data);
+            });
+            
             player.loadSource(src.url);
             player.attachMedia(video);
             player.on((Hls as any).Events.MANIFEST_PARSED, async ()=>{
-              try { video.currentTime = startSeconds; await video.play(); onStarted(); } catch(e){ onError(e); }
+              try { 
+                video.currentTime = startSeconds; 
+                await video.play(); 
+                const loadTime = performance.now() - startTime;
+                console.log(`HLS.js loaded in ${loadTime.toFixed(1)}ms`, { videoId, tier: src.tier });
+                onStarted(); 
+              } catch(e){ onError(e); }
             });
           }
         } else {
@@ -76,9 +163,14 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
           v.src = src.url;
           v.currentTime = startSeconds;
           await v.play().catch(()=>{});
+          const loadTime = performance.now() - startTime;
+          console.log(`Progressive MP4 loaded in ${loadTime.toFixed(1)}ms`, { videoId, tier: src.tier });
           onStarted();
         }
-      }catch(e){ onError(e); }
+      }catch(e){ 
+        console.error("Player boot error:", e);
+        onError(e); 
+      }
     }
 
     boot();
@@ -86,7 +178,7 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
       destroyed = true;
       try{ player?.destroy?.(); }catch{}
     };
-  }, [src, startSeconds, onError, onStarted]);
+  }, [src, startSeconds, onError, onStarted, videoId]);
 
   useEffect(()=>{
     const v = videoRef.current; if (!v) return;
