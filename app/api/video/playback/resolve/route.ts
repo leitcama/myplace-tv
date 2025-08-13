@@ -6,6 +6,7 @@ import { getClientConfig, getOptimalClientProfile, detectRegion, CLIENT_CONFIGS 
 import { tryInvidious, getInvidiousStats } from "@/lib/invidious";
 import { decipherVideo, DecipherErrorType } from "@/lib/decipher";
 import { getPrefetchedManifest } from "@/lib/prefetch";
+import { trackManifestExpiry } from "@/lib/expiry";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -258,6 +259,9 @@ export async function GET(req: Request) {
         correlationId: prefetchedManifest.correlationId,
       });
       
+      // Track expiry for prefetched manifests
+      trackManifestExpiry(videoId, prefetchedManifest, context);
+      
       return NextResponse.json({
         ...prefetchedManifest,
         prefetched: true,
@@ -270,6 +274,9 @@ export async function GET(req: Request) {
     
     if (cachedResult) {
       incrementCacheMetric('hits');
+      // Track expiry for cached results
+      trackManifestExpiry(videoId, cachedResult.result, context);
+      
       logWithContext('info', 'Resolve result cache hit', context, { 
         latency: Date.now() - startTime,
         tier: cachedResult.result.tier 
@@ -294,6 +301,9 @@ export async function GET(req: Request) {
       };
       await cache.set(resolveKey, cachedResult, ttl);
       incrementCacheMetric('sets');
+      
+      // Track expiry for YouTube results
+      trackManifestExpiry(videoId, youtubeResult, context);
       
       logWithContext('info', 'YouTube resolve successful', context, { 
         latency: Date.now() - startTime,
@@ -332,6 +342,9 @@ export async function GET(req: Request) {
       await cache.set(resolveKey, cachedResult, cachedResult.ttl);
       incrementCacheMetric('sets');
       
+      // Track expiry for Piped results
+      trackManifestExpiry(videoId, result, context);
+      
       logWithContext('info', 'Piped fallback successful', context, { 
         latency: Date.now() - startTime,
         tier: result.tier,
@@ -367,6 +380,9 @@ export async function GET(req: Request) {
       };
       await cache.set(resolveKey, cachedResult, cachedResult.ttl);
       incrementCacheMetric('sets');
+      
+      // Track expiry for Invidious results
+      trackManifestExpiry(videoId, result, context);
       
       logWithContext('info', 'Invidious fallback successful', context, { 
         latency: Date.now() - startTime,

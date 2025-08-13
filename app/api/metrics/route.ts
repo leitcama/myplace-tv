@@ -4,6 +4,7 @@ import { getInvidiousStats } from "@/lib/invidious";
 import { getDecipherStats } from "@/lib/decipher";
 import { getCanaryStats, getCanaryHealth } from "@/lib/canary";
 import { getPrefetchStats, getPrefetchHealth } from "@/lib/prefetch";
+import { getExpiryStats, getExpiryHealth } from "@/lib/expiry";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,6 +18,8 @@ export async function GET() {
     const canaryHealth = getCanaryHealth();
     const prefetchStats = getPrefetchStats();
     const prefetchHealth = getPrefetchHealth();
+    const expiryStats = getExpiryStats();
+    const expiryHealth = getExpiryHealth();
     
     const hitRate = cacheMetrics.hits + cacheMetrics.misses > 0 
       ? (cacheMetrics.hits / (cacheMetrics.hits + cacheMetrics.misses) * 100).toFixed(2)
@@ -55,6 +58,14 @@ export async function GET() {
         historyLength: prefetchStats.historyLength,
         successRate: `${prefetchStats.successRate.toFixed(1)}%`,
         recentResults: prefetchStats.recentResults.slice(-5), // Last 5 results
+      },
+      expiry: {
+        health: expiryHealth,
+        totalTracked: expiryStats.totalTracked,
+        activeIntervals: expiryStats.activeIntervals,
+        expiringSoon: expiryStats.expiringSoon,
+        refreshAttempts: expiryStats.refreshAttempts,
+        averageTimeUntilExpiry: `${Math.round(expiryStats.averageTimeUntilExpiry / 60)}m`,
       },
       system: {
         uptime: process.uptime(),
