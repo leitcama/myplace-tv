@@ -43,6 +43,23 @@ export default function Page(){
     fetchServerTime();
   }, []);
 
+  // Apply mute to the underlying <video>
+  useEffect(() => {
+    const el = document.querySelector("video");
+    if (el) el.muted = muted;
+  }, [muted]);
+
+  useEffect(()=>{
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "g") setShowGuide(v=>!v);
+      if (e.key.toLowerCase() === "m") {
+        const v = !muted; setMuted(v); if (typeof window !== "undefined") localStorage.setItem("mute", v?"1":"0");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [muted]);
+
   const now = useMemo(() => {
     const pos = positionAt(new Date(), config.epochStart, config.items);
     const item = config.items[pos.index];

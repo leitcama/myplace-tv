@@ -18,10 +18,7 @@ export default function Overlay({
     <div className="absolute top-3 left-3 z-20 glass rounded-md px-2 py-1 text-xs text-white/90 flex items-center gap-1">
       <Tv2 className="w-4 h-4 text-accent"/><span>{channel}</span>
     </div>
-    <a href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener" 
-       className="absolute top-3 right-3 z-20 glass rounded-md px-3 py-2 text-xs text-white/90 hover:text-white">
-      Watch on YouTube ↗
-    </a>
+    {/* Removed external YouTube link to maintain zero-UI constraints */}
     <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2">
       <button aria-label={muted?"Unmute":"Mute"} onClick={onToggleMute}
         className="glass rounded-md px-3 py-2 text-white/90 hover:text-white focus:outline-none focus:ring-2 focus:ring-accent">
