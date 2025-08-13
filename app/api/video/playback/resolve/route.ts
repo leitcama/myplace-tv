@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import ytdl from "ytdl-core";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function computeExpiry(urlString: string | undefined) {
   try {
