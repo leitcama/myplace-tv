@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import ytdl from "ytdl-core";
 import { cache, cacheKey, generateCorrelationId, logWithContext, incrementCacheMetric } from "@/lib/cache";
 import { ResolveResponse, ResolveContext, ResolveError, CachedResolveResult, CachedPlayerResponse, ClientProfile } from "@/types/resolver";
+import { getClientConfig, getOptimalClientProfile, detectRegion } from "@/lib/clients";
+import { tryInvidious, getInvidiousStats } from "@/lib/invidious";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,6 +63,9 @@ async function tryPiped(videoId: string, context: ResolveContext) {
 async function resolveWithYouTube(videoId: string, context: ResolveContext): Promise<ResolveResponse | null> {
   const { correlationId, clientProfile = 'WEB' } = context;
   
+  // Get client configuration
+  const clientConfig = getClientConfig(clientProfile);
+  
   // Check cache for player response
   const playerResponseKey = cacheKey('playerResponse', videoId, clientProfile);
   let playerResponse = await cache.get<CachedPlayerResponse>(playerResponseKey);
@@ -73,7 +78,21 @@ async function resolveWithYouTube(videoId: string, context: ResolveContext): Pro
     logWithContext('info', 'Player response cache miss', context);
     
     try {
-      const info = await ytdl.getInfo(videoId);
+      // Use ytdl-core with client configuration
+      const info = await ytdl.getInfo(videoId, {
+        requestOptions: {
+          headers: {
+            'User-Agent': clientConfig.userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+          },
+        },
+      });
+      
       const pr: any = (info as any).player_response || (info as any).playerResponse || {};
       
       // Cache the player response
@@ -89,7 +108,11 @@ async function resolveWithYouTube(videoId: string, context: ResolveContext): Pro
       
       playerResponse = cachedResponse;
     } catch (e) {
-      logWithContext('error', 'YouTube resolve failed', context, { error: e });
+      logWithContext('error', 'YouTube resolve failed', context, { 
+        error: e, 
+        clientProfile,
+        userAgent: clientConfig.userAgent 
+      });
       return null;
     }
   }
@@ -134,7 +157,13 @@ async function resolveWithYouTube(videoId: string, context: ResolveContext): Pro
   }
   
   // Final fallback: progressive MP4 with both audio+video
-  const info = await ytdl.getInfo(videoId);
+  const info = await ytdl.getInfo(videoId, {
+    requestOptions: {
+      headers: {
+        'User-Agent': clientConfig.userAgent,
+      },
+    },
+  });
   const progressive = (info.formats || [])
     .filter((f) => (f as any).hasAudio && (f as any).hasVideo && (f as any).container === "mp4" && !!f.url)
     .sort((a, b) => (Number(b.bitrate || 0) - Number(a.bitrate || 0)) || (Number(b.contentLength || 0) - Number(a.contentLength || 0)));
@@ -167,8 +196,8 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const videoId = searchParams.get("videoId");
-    const clientProfile = searchParams.get("clientProfile") as ClientProfile || 'WEB';
-    const region = searchParams.get("region") || undefined;
+    const requestedClientProfile = searchParams.get("clientProfile") as ClientProfile;
+    const requestedRegion = searchParams.get("region");
     
     if (!videoId) {
       const error: ResolveError = {
@@ -180,19 +209,30 @@ export async function GET(req: Request) {
       return NextResponse.json({ error }, { status: 400 });
     }
     
+    // Detect region and determine optimal client profile
+    const headers = Object.fromEntries(req.headers.entries());
+    const detectedRegion = requestedRegion || detectRegion(headers);
+    const userAgent = req.headers.get('user-agent') || undefined;
+    const clientProfile = requestedClientProfile || getOptimalClientProfile(detectedRegion, userAgent);
+    
     const context: ResolveContext = {
       videoId,
       clientProfile,
-      region,
+      region: detectedRegion,
       correlationId,
-      userAgent: req.headers.get('user-agent') || undefined,
+      userAgent,
       operation: 'resolve',
     };
     
-    logWithContext('info', 'Resolve request started', context);
+    logWithContext('info', 'Resolve request started', context, {
+      detectedRegion,
+      optimalClientProfile: clientProfile,
+      requestedClientProfile,
+      requestedRegion,
+    });
     
     // Check cache for resolve result
-    const resolveKey = cacheKey('resolveOutcome', videoId, clientProfile, region);
+    const resolveKey = cacheKey('resolveOutcome', videoId, clientProfile, detectedRegion);
     const cachedResult = await cache.get<CachedResolveResult>(resolveKey);
     
     if (cachedResult) {
@@ -206,7 +246,7 @@ export async function GET(req: Request) {
     
     incrementCacheMetric('misses');
     
-    // Tier 1: YouTube via ytdl-core
+    // Tier 1: YouTube via ytdl-core with optimal client
     const youtubeResult = await resolveWithYouTube(videoId, context);
     if (youtubeResult) {
       // Cache the result
@@ -225,7 +265,8 @@ export async function GET(req: Request) {
       logWithContext('info', 'YouTube resolve successful', context, { 
         latency: Date.now() - startTime,
         tier: youtubeResult.tier,
-        type: youtubeResult.type 
+        type: youtubeResult.type,
+        clientProfile: youtubeResult.clientProfile,
       });
       
       return NextResponse.json(youtubeResult);
@@ -267,6 +308,42 @@ export async function GET(req: Request) {
       return NextResponse.json(result);
     }
     
+    // Tier 3: Invidious fallback
+    logWithContext('info', 'Attempting Invidious fallback', context);
+    const invidious = await tryInvidious(videoId, context);
+    if (invidious) {
+      const expiresAt = computeExpiry(invidious.url);
+      const host = (() => { try { return new URL(invidious.url).host; } catch { return undefined; } })();
+      
+      const result: ResolveResponse = {
+        type: invidious.type,
+        url: invidious.url,
+        expiresAt,
+        cdnHost: host,
+        tier: "invidious",
+        clientProfile,
+        correlationId,
+        timestamp: new Date().toISOString(),
+      };
+      
+      // Cache with very short TTL for Invidious results
+      const cachedResult: CachedResolveResult = {
+        result,
+        cachedAt: new Date().toISOString(),
+        ttl: 1 * 60 * 1000, // 1 minute for Invidious
+      };
+      await cache.set(resolveKey, cachedResult, cachedResult.ttl);
+      incrementCacheMetric('sets');
+      
+      logWithContext('info', 'Invidious fallback successful', context, { 
+        latency: Date.now() - startTime,
+        tier: result.tier,
+        type: result.type 
+      });
+      
+      return NextResponse.json(result);
+    }
+    
     // No playable formats found
     const error: ResolveError = {
       code: 'unknown',
@@ -275,7 +352,10 @@ export async function GET(req: Request) {
       timestamp: new Date().toISOString(),
     };
     
-    logWithContext('error', 'No playable formats found', context, { latency: Date.now() - startTime });
+    logWithContext('error', 'No playable formats found', context, { 
+      latency: Date.now() - startTime,
+      tiersAttempted: ['youtube', 'piped', 'invidious']
+    });
     return NextResponse.json({ error }, { status: 502 });
     
   } catch (error: any) {

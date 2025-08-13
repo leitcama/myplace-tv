@@ -20,6 +20,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="dns-prefetch" href="//pipedapi.kavin.rocks" />
         <link rel="preconnect" href="https://piped.video" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://pipedapi.kavin.rocks" crossOrigin="anonymous" />
+        
+        {/* Preconnect for Invidious fallback endpoints */}
+        <link rel="dns-prefetch" href="//invidious.projectsegfau.lt" />
+        <link rel="dns-prefetch" href="//invidious.slipfox.xyz" />
+        <link rel="dns-prefetch" href="//invidious.privacydev.net" />
+        <link rel="preconnect" href="https://invidious.projectsegfau.lt" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://invidious.slipfox.xyz" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://invidious.privacydev.net" crossOrigin="anonymous" />
       </head>
       <body>{children}</body>
     </html>

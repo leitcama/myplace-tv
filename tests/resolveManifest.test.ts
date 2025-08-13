@@ -31,6 +31,30 @@ vi.mock("@/lib/cache", () => ({
   incrementCacheMetric: vi.fn(),
 }));
 
+// Mock clients
+vi.mock("@/lib/clients", () => ({
+  getClientConfig: vi.fn(() => ({
+    name: 'WEB',
+    version: '2.20231219.01.00',
+    platform: 'DESKTOP',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    innertubeApiKey: 'test-key',
+    innertubeContext: {},
+  })),
+  getOptimalClientProfile: vi.fn(() => 'WEB'),
+  detectRegion: vi.fn(() => 'US'),
+}));
+
+// Mock invidious
+vi.mock("@/lib/invidious", () => ({
+  tryInvidious: vi.fn(async () => null),
+  getInvidiousStats: vi.fn(() => ({
+    totalEndpoints: 8,
+    availableEndpoints: 8,
+    endpointStates: {},
+  })),
+}));
+
 // Piped mock via global fetch
 const g: any = globalThis;
 
@@ -79,5 +103,19 @@ describe("/api/video/playback/resolve", () => {
     const body = await res.json();
     expect(body.error).toBeDefined();
     expect(body.error.code).toBe("unknown");
+  });
+
+  it("uses optimal client profile and region detection", async () => {
+    const { getOptimalClientProfile, detectRegion } = await import("@/lib/clients");
+    (getOptimalClientProfile as any).mockReturnValueOnce('ANDROID');
+    (detectRegion as any).mockReturnValueOnce('CN');
+    
+    const mod = await import("../app/api/video/playback/resolve/route");
+    const req = new Request("http://localhost/api/video/playback/resolve?videoId=abc");
+    const res: Response = await (mod as any).GET(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.clientProfile).toBe("ANDROID");
+    expect(body.correlationId).toBe("test-correlation-id");
   });
 });

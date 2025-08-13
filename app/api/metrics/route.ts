@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCacheMetrics } from "@/lib/cache";
+import { getInvidiousStats } from "@/lib/invidious";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,6 +8,8 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const cacheMetrics = getCacheMetrics();
+    const invidiousStats = getInvidiousStats();
+    
     const hitRate = cacheMetrics.hits + cacheMetrics.misses > 0 
       ? (cacheMetrics.hits / (cacheMetrics.hits + cacheMetrics.misses) * 100).toFixed(2)
       : '0.00';
@@ -19,6 +22,12 @@ export async function GET() {
         sets: cacheMetrics.sets,
         deletes: cacheMetrics.deletes,
         hitRate: `${hitRate}%`,
+      },
+      invidious: {
+        totalEndpoints: invidiousStats.totalEndpoints,
+        availableEndpoints: invidiousStats.availableEndpoints,
+        availabilityRate: `${((invidiousStats.availableEndpoints / invidiousStats.totalEndpoints) * 100).toFixed(1)}%`,
+        endpointStates: invidiousStats.endpointStates,
       },
       system: {
         uptime: process.uptime(),

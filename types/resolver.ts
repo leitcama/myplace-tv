@@ -39,6 +39,24 @@ export interface DecipherContext {
 // Client profiles for different YouTube clients
 export type ClientProfile = 'WEB' | 'ANDROID' | 'TV' | 'IOS';
 
+// Client configuration for different profiles
+export interface ClientConfig {
+  name: string;
+  version: string;
+  platform: string;
+  userAgent: string;
+  innertubeApiKey: string;
+  innertubeContext: any;
+}
+
+// Regional information
+export interface RegionalInfo {
+  country: string;
+  region: string;
+  timezone: string;
+  language: string;
+}
+
 // Resolver request context
 export interface ResolveContext {
   videoId: string;
