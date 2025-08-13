@@ -5,6 +5,9 @@ import { getDecipherStats } from "@/lib/decipher";
 import { getCanaryStats, getCanaryHealth } from "@/lib/canary";
 import { getPrefetchStats, getPrefetchHealth } from "@/lib/prefetch";
 import { getExpiryStats, getExpiryHealth } from "@/lib/expiry";
+import { getErrorStats, getErrorHealth } from "@/lib/error-taxonomy";
+import { getRecoveryStats, getRecoveryHealth } from "@/lib/error-recovery";
+import { getWatchdogStats, getWatchdogHealth } from "@/lib/enhanced-watchdog";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +23,12 @@ export async function GET() {
     const prefetchHealth = getPrefetchHealth();
     const expiryStats = getExpiryStats();
     const expiryHealth = getExpiryHealth();
+    const errorStats = getErrorStats();
+    const errorHealth = getErrorHealth();
+    const recoveryStats = getRecoveryStats();
+    const recoveryHealth = getRecoveryHealth();
+    const watchdogStats = getWatchdogStats();
+    const watchdogHealth = getWatchdogHealth();
     
     const hitRate = cacheMetrics.hits + cacheMetrics.misses > 0 
       ? (cacheMetrics.hits / (cacheMetrics.hits + cacheMetrics.misses) * 100).toFixed(2)
@@ -66,6 +75,35 @@ export async function GET() {
         expiringSoon: expiryStats.expiringSoon,
         refreshAttempts: expiryStats.refreshAttempts,
         averageTimeUntilExpiry: `${Math.round(expiryStats.averageTimeUntilExpiry / 60)}m`,
+      },
+      errors: {
+        health: errorHealth,
+        totalErrors: errorStats.totalErrors,
+        totalRecoveries: errorStats.totalRecoveries,
+        errorDistribution: errorStats.errorDistribution,
+        recoverySuccessRates: Object.fromEntries(
+          Object.entries(errorStats.recoverySuccessRates).map(([type, rate]) => [
+            type, 
+            `${(rate * 100).toFixed(1)}%`
+          ])
+        ),
+      },
+      recovery: {
+        health: recoveryHealth,
+        totalRecoveries: recoveryStats.totalRecoveries,
+        successfulRecoveries: recoveryStats.successfulRecoveries,
+        recoverySuccessRate: `${recoveryStats.recoverySuccessRate.toFixed(1)}%`,
+        activeRecoveries: recoveryStats.activeRecoveries,
+      },
+      watchdog: {
+        health: watchdogHealth,
+        totalVideos: watchdogStats.totalVideos,
+        healthyVideos: watchdogStats.healthyVideos,
+        stalledVideos: watchdogStats.stalledVideos,
+        totalStalls: watchdogStats.totalStalls,
+        totalErrors: watchdogStats.totalErrors,
+        totalRecoveries: watchdogStats.totalRecoveries,
+        averageRecoveryAttempts: watchdogStats.averageRecoveryAttempts.toFixed(1),
       },
       system: {
         uptime: process.uptime(),

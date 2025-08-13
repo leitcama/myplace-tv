@@ -17,6 +17,44 @@ const startupMetrics: Array<{
   userAgent: string;
 }> = [];
 
+// Error taxonomy events storage
+const errorEvents: Array<{
+  type: string;
+  severity: string;
+  message: string;
+  videoId: string;
+  timestamp: string;
+  userAgent: string;
+  retryCount: number;
+  recoveryAction?: string;
+  success: boolean;
+  duration?: number;
+}> = [];
+
+// Recovery events storage
+const recoveryEvents: Array<{
+  action: string;
+  videoId: string;
+  timestamp: string;
+  userAgent: string;
+  success: boolean;
+  duration: number;
+  error?: string;
+  newQualityLevel?: number;
+}> = [];
+
+// Watchdog events storage
+const watchdogEvents: Array<{
+  type: string;
+  videoId: string;
+  timestamp: string;
+  userAgent: string;
+  details: any;
+  errorType?: string;
+  recoveryAction?: string;
+  duration?: number;
+}> = [];
+
 export async function POST(req: Request) {
   try {
     const data = await req.json();
@@ -77,6 +115,90 @@ export async function POST(req: Request) {
       });
     }
     
+    // Handle error taxonomy events
+    if (data.type === 'error_event') {
+      errorEvents.push({
+        type: data.errorType,
+        severity: data.severity,
+        message: data.message,
+        videoId: data.videoId,
+        timestamp: data.timestamp,
+        userAgent: data.userAgent,
+        retryCount: data.retryCount || 0,
+        recoveryAction: data.recoveryAction,
+        success: data.success || false,
+        duration: data.duration,
+      });
+      
+      // Keep only last 200 error events
+      if (errorEvents.length > 200) {
+        errorEvents.splice(0, errorEvents.length - 200);
+      }
+      
+      console.log('Error event tracked:', {
+        videoId: data.videoId,
+        type: data.errorType,
+        severity: data.severity,
+        message: data.message?.substring(0, 100),
+        retryCount: data.retryCount,
+        recoveryAction: data.recoveryAction,
+        success: data.success,
+      });
+    }
+    
+    // Handle recovery events
+    if (data.type === 'recovery_event') {
+      recoveryEvents.push({
+        action: data.action,
+        videoId: data.videoId,
+        timestamp: data.timestamp,
+        userAgent: data.userAgent,
+        success: data.success,
+        duration: data.duration,
+        error: data.error,
+        newQualityLevel: data.newQualityLevel,
+      });
+      
+      // Keep only last 200 recovery events
+      if (recoveryEvents.length > 200) {
+        recoveryEvents.splice(0, recoveryEvents.length - 200);
+      }
+      
+      console.log('Recovery event tracked:', {
+        videoId: data.videoId,
+        action: data.action,
+        success: data.success,
+        duration: data.duration,
+        newQualityLevel: data.newQualityLevel,
+      });
+    }
+    
+    // Handle watchdog events
+    if (data.type === 'watchdog_event') {
+      watchdogEvents.push({
+        type: data.eventType,
+        videoId: data.videoId,
+        timestamp: data.timestamp,
+        userAgent: data.userAgent,
+        details: data.details,
+        errorType: data.errorType,
+        recoveryAction: data.recoveryAction,
+        duration: data.duration,
+      });
+      
+      // Keep only last 200 watchdog events
+      if (watchdogEvents.length > 200) {
+        watchdogEvents.splice(0, watchdogEvents.length - 200);
+      }
+      
+      console.log('Watchdog event tracked:', {
+        videoId: data.videoId,
+        type: data.eventType,
+        errorType: data.errorType,
+        recoveryAction: data.recoveryAction,
+      });
+    }
+    
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Telemetry error:', error);
@@ -92,6 +214,9 @@ export async function GET() {
     // Return aggregated telemetry data for monitoring
     const ttffData = telemetryData.filter(d => d.type === 'ttff');
     const startupData = startupMetrics;
+    const errorData = errorEvents;
+    const recoveryData = recoveryEvents;
+    const watchdogData = watchdogEvents;
     
     const result: any = {
       timestamp: new Date().toISOString(),
@@ -164,6 +289,84 @@ export async function GET() {
           resolveTime: d.resolveTime,
           playerBootTime: d.playerBootTime,
           firstFrameTime: d.firstFrameTime,
+          timestamp: d.timestamp,
+        })),
+      };
+    }
+    
+    // Error taxonomy metrics
+    if (errorData.length > 0) {
+      const errorTypeCounts = errorData.reduce((acc, event) => {
+        acc[event.type] = (acc[event.type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const severityCounts = errorData.reduce((acc, event) => {
+        acc[event.severity] = (acc[event.severity] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const successRate = errorData.filter(e => e.success).length / errorData.length;
+      
+      result.errors = {
+        total: errorData.length,
+        errorTypeCounts,
+        severityCounts,
+        successRate: `${(successRate * 100).toFixed(1)}%`,
+        recent: errorData.slice(-10).map(d => ({
+          videoId: d.videoId,
+          type: d.type,
+          severity: d.severity,
+          message: d.message?.substring(0, 50),
+          retryCount: d.retryCount,
+          recoveryAction: d.recoveryAction,
+          success: d.success,
+          timestamp: d.timestamp,
+        })),
+      };
+    }
+    
+    // Recovery metrics
+    if (recoveryData.length > 0) {
+      const actionCounts = recoveryData.reduce((acc, event) => {
+        acc[event.action] = (acc[event.action] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const successRate = recoveryData.filter(e => e.success).length / recoveryData.length;
+      const avgDuration = recoveryData.reduce((sum, e) => sum + e.duration, 0) / recoveryData.length;
+      
+      result.recovery = {
+        total: recoveryData.length,
+        actionCounts,
+        successRate: `${(successRate * 100).toFixed(1)}%`,
+        averageDuration: Math.round(avgDuration),
+        recent: recoveryData.slice(-10).map(d => ({
+          videoId: d.videoId,
+          action: d.action,
+          success: d.success,
+          duration: d.duration,
+          newQualityLevel: d.newQualityLevel,
+          timestamp: d.timestamp,
+        })),
+      };
+    }
+    
+    // Watchdog metrics
+    if (watchdogData.length > 0) {
+      const eventTypeCounts = watchdogData.reduce((acc, event) => {
+        acc[event.type] = (acc[event.type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      result.watchdog = {
+        total: watchdogData.length,
+        eventTypeCounts,
+        recent: watchdogData.slice(-10).map(d => ({
+          videoId: d.videoId,
+          type: d.type,
+          errorType: d.errorType,
+          recoveryAction: d.recoveryAction,
           timestamp: d.timestamp,
         })),
       };
