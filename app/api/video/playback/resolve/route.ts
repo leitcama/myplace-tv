@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import ytdl from "ytdl-core";
 import { cache, cacheKey, generateCorrelationId, logWithContext, incrementCacheMetric } from "@/lib/cache";
 import { ResolveResponse, ResolveContext, ResolveError, CachedResolveResult, CachedPlayerResponse, ClientProfile } from "@/types/resolver";
-import { getClientConfig, getOptimalClientProfile, detectRegion } from "@/lib/clients";
+import { getClientConfig, getOptimalClientProfile, detectRegion, CLIENT_CONFIGS } from "@/lib/clients";
 import { tryInvidious, getInvidiousStats } from "@/lib/invidious";
 
 export const dynamic = "force-dynamic";
@@ -213,7 +213,10 @@ export async function GET(req: Request) {
     const headers = Object.fromEntries(req.headers.entries());
     const detectedRegion = requestedRegion || detectRegion(headers);
     const userAgent = req.headers.get('user-agent') || undefined;
-    const clientProfile = requestedClientProfile || getOptimalClientProfile(detectedRegion, userAgent);
+    const rawClientProfile = requestedClientProfile || getOptimalClientProfile(detectedRegion, userAgent);
+    
+    // Validate client profile and fallback to WEB if invalid
+    const clientProfile: ClientProfile = CLIENT_CONFIGS[rawClientProfile as ClientProfile] ? rawClientProfile as ClientProfile : 'WEB';
     
     const context: ResolveContext = {
       videoId,
@@ -356,7 +359,16 @@ export async function GET(req: Request) {
       latency: Date.now() - startTime,
       tiersAttempted: ['youtube', 'piped', 'invidious']
     });
-    return NextResponse.json({ error }, { status: 502 });
+    
+    // Return error with context information for debugging
+    return NextResponse.json({ 
+      error,
+      context: {
+        clientProfile,
+        region: detectedRegion,
+        tiersAttempted: ['youtube', 'piped', 'invidious']
+      }
+    }, { status: 502 });
     
   } catch (error: any) {
     const errorResponse: ResolveError = {
@@ -372,6 +384,13 @@ export async function GET(req: Request) {
       operation: 'resolve' 
     }, { error: errorResponse, latency: Date.now() - startTime });
     
-    return NextResponse.json({ error: errorResponse }, { status: 500 });
+    return NextResponse.json({ 
+      error: errorResponse,
+      context: {
+        clientProfile: 'unknown',
+        region: 'unknown',
+        tiersAttempted: []
+      }
+    }, { status: 500 });
   }
 }
