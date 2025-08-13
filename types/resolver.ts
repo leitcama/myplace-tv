@@ -89,4 +89,6 @@ export interface CachedPlayerResponse {
   ttl: number;
   clientProfile: string;
   region?: string;
+  baseJsHash?: string;
+  signatureVersion?: string;
 }

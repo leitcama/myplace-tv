@@ -4,6 +4,7 @@ import { cache, cacheKey, generateCorrelationId, logWithContext, incrementCacheM
 import { ResolveResponse, ResolveContext, ResolveError, CachedResolveResult, CachedPlayerResponse, ClientProfile } from "@/types/resolver";
 import { getClientConfig, getOptimalClientProfile, detectRegion, CLIENT_CONFIGS } from "@/lib/clients";
 import { tryInvidious, getInvidiousStats } from "@/lib/invidious";
+import { decipherVideo, DecipherErrorType } from "@/lib/decipher";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -78,35 +79,47 @@ async function resolveWithYouTube(videoId: string, context: ResolveContext): Pro
     logWithContext('info', 'Player response cache miss', context);
     
     try {
-      // Use ytdl-core with client configuration
-      const info = await ytdl.getInfo(videoId, {
-        requestOptions: {
-          headers: {
-            'User-Agent': clientConfig.userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-          },
-        },
-      });
+      // Use decipher adapter for better error handling
+      const decipherResult = await decipherVideo(videoId, context);
       
+      if (!decipherResult.success) {
+        // Log detailed error information
+        logWithContext('error', 'Decipher failed', context, {
+          errorType: decipherResult.error?.type,
+          errorMessage: decipherResult.error?.message,
+          baseJsHash: decipherResult.baseJsHash,
+          signatureVersion: decipherResult.signatureVersion,
+          details: decipherResult.error?.details,
+        });
+        
+        // Return null to trigger fallback
+        return null;
+      }
+      
+      const info = decipherResult.data;
       const pr: any = (info as any).player_response || (info as any).playerResponse || {};
       
-      // Cache the player response
+      // Cache the player response with decipher metadata
       const cachedResponse: CachedPlayerResponse = {
         playerResponse: pr,
         cachedAt: new Date().toISOString(),
         ttl: 5 * 60 * 1000, // 5 minutes
         clientProfile,
         region: context.region,
+        baseJsHash: decipherResult.baseJsHash,
+        signatureVersion: decipherResult.signatureVersion,
       };
       await cache.set(playerResponseKey, cachedResponse, cachedResponse.ttl);
       incrementCacheMetric('sets');
       
       playerResponse = cachedResponse;
+      
+      // Log successful decipher
+      logWithContext('info', 'Decipher successful', context, {
+        baseJsHash: decipherResult.baseJsHash,
+        signatureVersion: decipherResult.signatureVersion,
+      });
+      
     } catch (e) {
       logWithContext('error', 'YouTube resolve failed', context, { 
         error: e, 
