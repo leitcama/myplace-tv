@@ -15,13 +15,24 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
   const watchdogRef = useRef<number|undefined>();
   const startedRef = useRef<boolean>(false);
   const [ttff, setTtff] = useState<number|null>(null);
+  const [startupMetrics, setStartupMetrics] = useState<{
+    resolveTime: number;
+    playerBootTime: number;
+    firstFrameTime: number;
+    totalStartupTime: number;
+  } | null>(null);
   const startTimeRef = useRef<number>(0);
+  const resolveStartTimeRef = useRef<number>(0);
+  const playerBootStartTimeRef = useRef<number>(0);
 
   useEffect(() => {
     currentTimeRef.current = startSeconds||0;
     startedRef.current = false;
     setTtff(null);
+    setStartupMetrics(null);
     startTimeRef.current = performance.now();
+    resolveStartTimeRef.current = 0;
+    playerBootStartTimeRef.current = 0;
     
     if (watchdogRef.current) window.clearTimeout(watchdogRef.current);
     watchdogRef.current = window.setTimeout(() => {
@@ -42,28 +53,56 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
     const ttffMs = performance.now() - startTimeRef.current;
     setTtff(ttffMs);
     
-    // Log TTFF for monitoring
-    console.log("TTFF measured", {
+    // Calculate detailed startup metrics
+    const resolveTime = resolveStartTimeRef.current - startTimeRef.current;
+    const playerBootTime = playerBootStartTimeRef.current - resolveStartTimeRef.current;
+    const firstFrameTime = ttffMs - playerBootStartTimeRef.current;
+    
+    const metrics = {
+      resolveTime,
+      playerBootTime,
+      firstFrameTime,
+      totalStartupTime: ttffMs,
+    };
+    
+    setStartupMetrics(metrics);
+    
+    // Log detailed startup metrics for monitoring
+    console.log("Enhanced startup metrics", {
       videoId,
       ttff: ttffMs.toFixed(1),
+      resolveTime: resolveTime.toFixed(1),
+      playerBootTime: playerBootTime.toFixed(1),
+      firstFrameTime: firstFrameTime.toFixed(1),
       startSeconds,
       timestamp: new Date().toISOString(),
     });
     
-    // Send telemetry if TTFF is available
+    // Send enhanced telemetry
     if (typeof window !== 'undefined' && window.navigator) {
       fetch('/api/telemetry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'ttff',
+          type: 'startup_metrics',
           videoId,
           ttff: ttffMs,
+          resolveTime,
+          playerBootTime,
+          firstFrameTime,
           userAgent: navigator.userAgent,
           timestamp: new Date().toISOString(),
         }),
       }).catch(() => {}); // Silently fail
     }
+  };
+
+  const handleResolveComplete = () => {
+    resolveStartTimeRef.current = performance.now();
+  };
+
+  const handlePlayerBootStart = () => {
+    playerBootStartTimeRef.current = performance.now();
   };
 
   const handleError = (e: any) => {
@@ -79,6 +118,8 @@ export default function Player({ videoId, startSeconds, onAdvance, onSkip }:{
       onStarted={handleStarted}
       onEnded={onAdvance}
       onError={handleError}
+      onResolveComplete={handleResolveComplete}
+      onPlayerBootStart={handlePlayerBootStart}
     />
   </div>;
 }

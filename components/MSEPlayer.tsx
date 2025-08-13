@@ -2,12 +2,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ResolveResponse } from "@/types/resolver";
 
-export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, onError }:{
+export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, onError, onResolveComplete, onPlayerBootStart }:{
   videoId: string;
   startSeconds: number;
   onStarted: () => void;
   onEnded: () => void;
   onError: (err: any) => void;
+  onResolveComplete?: () => void;
+  onPlayerBootStart?: () => void;
 }){
   const videoRef = useRef<HTMLVideoElement|null>(null);
   const [src, setSrc] = useState<ResolveResponse|null>(null);
@@ -47,6 +49,8 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
             type: j.type,
             correlationId: j.correlationId,
           });
+          // Track resolve completion
+          onResolveComplete?.();
         } else {
           throw new Error("no_source");
         }
@@ -67,6 +71,8 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
     async function boot(){
       try{
         const startTime = performance.now();
+        // Track player boot start
+        onPlayerBootStart?.();
         
         if (src.type === "dash"){
           const { default: shaka } = await import("shaka-player/dist/shaka-player.ui.js");
@@ -74,24 +80,34 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
           if (!shaka.Player.isBrowserSupported()) throw new Error("shaka_unsupported");
           player = new shaka.Player(videoRef.current);
           
-          // Optimized Shaka config for fast startup and reduced rebuffering
+          // Enhanced Shaka config for optimal ABR performance and fast startup
           player.configure({
             streaming: { 
-              bufferingGoal: 8, 
-              rebufferingGoal: 2,
-              jumpLargeGaps: true,
+              bufferingGoal: 8, // 8 seconds of content
+              rebufferingGoal: 2, // 2 seconds for rebuffering
+              jumpLargeGaps: true, // Skip large gaps in content
               retryParameters: {
                 maxAttempts: 3,
                 baseDelay: 1000,
                 backoffFactor: 2,
                 fuzzFactor: 0.5,
-              }
+              },
+              // Enhanced buffer management
+              bufferBehind: 30, // Keep 30 seconds behind current time
+              bufferAhead: 10, // Buffer 10 seconds ahead
+              lowLatencyMode: false, // Disable for TV-like experience
             },
             abr: { 
-              defaultBandwidthEstimate: 2_000_000, // Lower initial estimate for faster startup
+              defaultBandwidthEstimate: 1_500_000, // Reduced to 1.5 Mbps for faster startup
               enabled: true, 
-              switchInterval: 1.5, // Faster quality switching
+              switchInterval: 1.0, // Faster quality switching
               bandwidthUpdateInterval: 0.5,
+              // Enhanced ABR settings
+              useNetworkInformation: true,
+              restrictions: {
+                minBandwidth: 500_000, // 500 Kbps minimum
+                maxBandwidth: 10_000_000, // 10 Mbps maximum
+              },
             },
             manifest: {
               retryParameters: {
@@ -99,8 +115,22 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
                 baseDelay: 1000,
                 backoffFactor: 2,
                 fuzzFactor: 0.5,
-              }
-            }
+              },
+              dash: {
+                defaultTimeOffset: 0,
+                ignoreMinBufferTime: false,
+                autoCorrectDrift: true,
+              },
+            },
+            // Enhanced drm settings
+            drm: {
+              retryParameters: {
+                maxAttempts: 3,
+                baseDelay: 1000,
+                backoffFactor: 2,
+                fuzzFactor: 0.5,
+              },
+            },
           });
           
           player.addEventListener("error", (ev:any)=> {
@@ -127,17 +157,31 @@ export default function MSEPlayer({ videoId, startSeconds, onStarted, onEnded, o
             const { default: Hls } = await import("hls.js");
             if (!(Hls as any).isSupported()) throw new Error("hls_unsupported");
             
+            // Enhanced hls.js config for optimal ABR performance
             player = new (Hls as any)({ 
-              lowLatencyMode: true, 
-              backBufferLength: 30,
-              maxBufferLength: 10, // Conservative buffer
-              maxMaxBufferLength: 12,
+              lowLatencyMode: false, // Disable for TV-like experience
+              backBufferLength: 30, // Keep 30 seconds in back buffer
+              maxBufferLength: 8, // Reduced for faster startup
+              maxMaxBufferLength: 10, // Conservative max buffer
               startLevel: 0, // Start at lowest quality for faster startup
-              capLevelToPlayerSize: true,
-              abrEwmaDefaultEstimate: 2_000_000, // Lower initial bandwidth estimate
-              abrBandWidthFactor: 0.95,
-              abrBandWidthUpFactor: 0.7,
-              abrMaxWithRealBitrate: true,
+              capLevelToPlayerSize: true, // Cap quality to player size
+              abrEwmaDefaultEstimate: 1_500_000, // Reduced initial bandwidth estimate
+              abrBandWidthFactor: 0.95, // Conservative bandwidth factor
+              abrBandWidthUpFactor: 0.7, // Conservative up factor
+              abrMaxWithRealBitrate: true, // Use real bitrate for ABR
+              // Enhanced ABR settings
+              abrEwmaFastLive: 3.0, // Fast adaptation for live content
+              abrEwmaSlowLive: 9.0, // Slow adaptation for live content
+              abrEwmaFastVoD: 3.0, // Fast adaptation for VOD
+              abrEwmaSlowVoD: 9.0, // Slow adaptation for VOD
+              // Enhanced buffer settings
+              maxBufferHole: 0.5, // Max buffer hole in seconds
+              maxStarvationDelay: 4, // Max starvation delay
+              maxLoadingDelay: 4, // Max loading delay
+              // Enhanced fragment loading
+              fragLoadingTimeOut: 20000, // 20 second timeout
+              manifestLoadingTimeOut: 10000, // 10 second timeout
+              levelLoadingTimeOut: 10000, // 10 second timeout
             });
             
             player.on((Hls as any).Events.ERROR, (_e:any, data:any)=> {
